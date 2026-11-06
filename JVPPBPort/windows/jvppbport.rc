@@ -1,0 +1,31 @@
+// JVPPBPort: the Windows .exe's icon and the name Windows shows for it
+// (compiled with windres by `make jvppbport-win`). Icon 1 is also the
+// window's icon (SDL uses the program's first icon).
+#include <winver.h>
+#include "version.h"
+
+1 ICON "jvppbport.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION PORT_VERSION_MAJOR,PORT_VERSION_MINOR,PORT_VERSION_PATCH,0
+PRODUCTVERSION PORT_VERSION_MAJOR,PORT_VERSION_MINOR,PORT_VERSION_PATCH,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", PORT_NAME
+            VALUE "ProductName", PORT_NAME
+            VALUE "ProductVersion", PORT_VERSION
+            VALUE "FileVersion", PORT_VERSION
+            VALUE "OriginalFilename", "JVPPBPort.exe"
+            VALUE "InternalName", "JVPPBPort"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

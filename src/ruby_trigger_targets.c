@@ -1,0 +1,493 @@
+#include "global.h"
+#include "m4a.h"
+#include "main.h"
+#include "constants/bg_music.h"
+#include "constants/board/ruby_states.h"
+#include "constants/mem_layout/ruby.h"
+
+// Rom_1 data
+extern const u8 gRubyChikoritaEntity[][SIZE_OF_VRAM_CHIKORITA_TILES];
+extern const u8 gChikoritaProjectileTiles[][SIZE_OF_VRAM_CHIKORITA_BLADE_TILES];
+extern const u8 gChikoritaExplosionTiles[][SIZE_OF_VRAM_CHIKORITA_BLADE_HIT_FX_TILES];
+extern const u8 gRubyStageGulpin_Gfx[][SIZE_OF_VRAM_GULPIN_TILES];
+extern const u8 gLinooneBumperGfx[][SIZE_OF_VRAM_RUBY_LINOONE_TILES];
+
+// Rom_2 data
+extern const s16 gChikoritaFlashFrameIndices[];
+extern const s16 gGulpinAnimData[][5];
+extern const u16 gLinooneBumperGfxFrameIndices[][2];
+extern const u16 gGulpinOamData[146][18];
+
+//ruby
+void UpdateChikoritaAttackAnimation(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    s16 index;
+    s16 var0;
+
+    index = 0;
+    group = &gMain.spriteGroups[SG_RUBY_CHIKORITA_PROJECTILE_COLLISION_FX];
+    if (gCurrentPinballGame->chikoritaProjectileTimer < 60)
+    {
+        if (gCurrentPinballGame->chikoritaProjectileTimer >= 27 && gCurrentPinballGame->chikoritaProjectileTimer < 47)
+        {
+            index = (gCurrentPinballGame->chikoritaProjectileTimer - 27) / 5;
+            DmaCopy16(3, gChikoritaExplosionTiles[index], OBJ_VRAM_ADDR_CHIKORITA_BLADE_HIT_FX_TILES, SIZE_OF_VRAM_CHIKORITA_BLADE_HIT_FX_TILES);
+            group->baseX = 176 - gCurrentPinballGame->cameraXOffset;
+        }
+        else
+        {
+            group->active = FALSE;
+            group->baseX = 176 - gCurrentPinballGame->cameraXOffset;
+        }
+    }
+    else
+    {
+        if (gCurrentPinballGame->chikoritaProjectileTimer >= 100 && gCurrentPinballGame->chikoritaProjectileTimer < 120)
+        {
+            index = (gCurrentPinballGame->chikoritaProjectileTimer - 100) / 5;
+            DmaCopy16(3, gChikoritaExplosionTiles[index], OBJ_VRAM_ADDR_CHIKORITA_BLADE_HIT_FX_TILES, SIZE_OF_VRAM_CHIKORITA_BLADE_HIT_FX_TILES);
+            group->baseX = 32 - gCurrentPinballGame->cameraXOffset;
+        }
+        else
+        {
+            group->active = FALSE;
+            group->baseX = 32 - gCurrentPinballGame->cameraXOffset;
+        }
+
+    }
+
+    if (group->active)
+    {
+        group->baseY = 296 - gCurrentPinballGame->cameraYOffset;
+        if (group->baseY > 180)
+            group->baseY = 180;
+
+        for (i = 0; i < 2; i++)
+        {
+            oamSimple = &group->oam[i];
+            gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+            gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+        }
+    }
+
+    group = &gMain.spriteGroups[SG_RUBY_CHIKORITA_PROJECTILE];
+    if (group->active)
+    {
+        if (gCurrentPinballGame->chikoritaProjectileTimer < 120)
+        {
+            if (gCurrentPinballGame->chikoritaProjectileTimer % 8 == 0)
+                m4aSongNumStart(SE_CHIKORITA_LEAF_BLADE);
+
+            index = (gCurrentPinballGame->chikoritaProjectileTimer % 16) / 4;
+            DmaCopy16(3, gChikoritaProjectileTiles[index], OBJ_VRAM_ADDR_CHIKORITA_BLADE_TILES, SIZE_OF_VRAM_CHIKORITA_BLADE_TILES);
+            var0 = (gCurrentPinballGame->chikoritaProjectileTimer << 0x10) / 90;
+            gCurrentPinballGame->chikoritaProjectileVelX -= 2;
+            gCurrentPinballGame->chikoritaProjectileX += gCurrentPinballGame->chikoritaProjectileVelX;
+            if (gCurrentPinballGame->chikoritaProjectileTimer < 30)
+                gCurrentPinballGame->chikoritaProjectileY = gCurrentPinballGame->chikoritaProjectileTimer
+                    + MulSin(24, var0);
+            else
+                gCurrentPinballGame->chikoritaProjectileY = 30 + MulSin(24, var0);
+
+            gCurrentPinballGame->chikoritaProjectileTimer++;
+            if (gCurrentPinballGame->chikoritaProjectileTimer == 27)
+            {
+                gMain.spriteGroups[SG_RUBY_CHIKORITA_PROJECTILE_COLLISION_FX].active = TRUE;
+                m4aSongNumStart(SE_ZIGZAGOON_EMERGE);
+                if (gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_RIGHT] > 0)
+                {
+                    gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_RIGHT]++;
+                }
+                else
+                {
+                    gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_RIGHT] = 2;
+                    gCurrentPinballGame->linooneSideBumperAnimTimer[SIDE_IX_RIGHT] = 190;
+                }
+            }
+
+            if (gCurrentPinballGame->chikoritaProjectileTimer == 100)
+            {
+                gMain.spriteGroups[SG_RUBY_CHIKORITA_PROJECTILE_COLLISION_FX].active = TRUE;
+                m4aSongNumStart(SE_ZIGZAGOON_EMERGE);
+                if (gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_LEFT] > 0)
+                {
+                    gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_LEFT]++;
+                }
+                else
+                {
+                    gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_LEFT] = 2;
+                    gCurrentPinballGame->linooneSideBumperAnimTimer[SIDE_IX_LEFT] = 190;
+                }
+            }
+        }
+        else
+        {
+            gCurrentPinballGame->chikoritaProjectileTimer = 0;
+            gCurrentPinballGame->chikoritaProjectileX = 0;
+            gCurrentPinballGame->chikoritaProjectileY = 190;
+            gCurrentPinballGame->chikoritaProjectileVelX = 100;
+            gCurrentPinballGame->chikoritaProjectileUnused = 0;
+            group->active = FALSE;
+        }
+
+        group->baseX = (gCurrentPinballGame->chikoritaProjectileX / 20) + 71u - gCurrentPinballGame->cameraXOffset;
+        group->baseY = gCurrentPinballGame->chikoritaProjectileY + 248u - gCurrentPinballGame->cameraYOffset;
+        if (group->baseY > 190)
+            group->baseY = 190;
+
+        oamSimple = &group->oam[0];
+        gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+        gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+    }
+}
+
+void AnimateChikoritaSprite(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    s16 index;
+
+    group = &gMain.spriteGroups[SG_RUBY_CHIKORITA];
+    if (gCurrentPinballGame->chikoritaFlashActive)
+    {
+        index = gChikoritaFlashFrameIndices[gCurrentPinballGame->chikoritaFlashTimer / 5];
+        if (gCurrentPinballGame->chikoritaFlashTimer == 40)
+        {
+            gCurrentPinballGame->chikoritaProjectileTimer = 0;
+            gCurrentPinballGame->chikoritaProjectileX = 0;
+            gCurrentPinballGame->chikoritaProjectileY = 0;
+            gCurrentPinballGame->chikoritaProjectileVelX = 100;
+            gCurrentPinballGame->chikoritaProjectileUnused = 0;
+            gMain.spriteGroups[SG_RUBY_CHIKORITA_PROJECTILE].active = TRUE;
+        }
+
+        if (gCurrentPinballGame->chikoritaFlashTimer < 54)
+            gCurrentPinballGame->chikoritaFlashTimer++;
+        else
+            gCurrentPinballGame->chikoritaFlashActive = FALSE;
+
+        DmaCopy16(3, gRubyChikoritaEntity[index], OBJ_VRAM_ADDR_CHIKORITA_TILES, SIZE_OF_VRAM_CHIKORITA_TILES);
+    }
+    else
+    {
+        index = (gMain.systemFrameCount % 50) / 25;
+        if (gCurrentPinballGame->randomSpriteVariantSeed == 1)
+        {
+            DmaCopy16(3, gRubyChikoritaEntity[index], OBJ_VRAM_ADDR_CHIKORITA_TILES, SIZE_OF_VRAM_CHIKORITA_TILES);
+        }
+    }
+
+    group->baseX = 55 - gCurrentPinballGame->cameraXOffset;
+    group->baseY = 221 - gCurrentPinballGame->cameraYOffset;
+    i = 0;
+    for (i = 0; i < 2; i++)
+    {
+        oamSimple = &group->oam[i];
+        gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+        gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+    }
+}
+
+void UpdateGulpinBossState(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    u16 *dst;
+    const s16 *gulpinFramesetData;
+    s16 index;
+
+    gulpinFramesetData = gGulpinAnimData[gCurrentPinballGame->gulpinAnimFrameIndex];
+    group = &gMain.spriteGroups[SG_RUBY_GULPIN_STACK];
+    group->baseX = 9 - gCurrentPinballGame->cameraXOffset;
+    group->baseY = 288 - gCurrentPinballGame->cameraYOffset;
+    if (gCurrentPinballGame->gulpinDisplayedLevel > gCurrentPinballGame->travelTrackerCount)
+    {
+        if (gCurrentPinballGame->travelTrackerExitSequenceActive)
+        {
+            if (gCurrentPinballGame->travelTrackerExitSequenceTimer == 0)
+            {
+                gCurrentPinballGame->gulpinAnimFrameIndex = 59;
+                gCurrentPinballGame->gulpinAnimFrameTimer = 0;
+                gCurrentPinballGame->travelTrackerExitSequenceTimer++;
+            }
+
+            if (gulpinFramesetData[1] > gCurrentPinballGame->gulpinAnimFrameTimer)
+            {
+                gCurrentPinballGame->gulpinAnimFrameTimer++;
+            }
+            else
+            {
+                gCurrentPinballGame->gulpinAnimFrameTimer = 1;
+                gCurrentPinballGame->gulpinAnimFrameIndex++;
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 84)
+                {
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 0;
+                    gCurrentPinballGame->travelTrackerExitSequenceActive = FALSE;
+                    gCurrentPinballGame->travelTrackerExitSequenceTimer = 0;
+                    gCurrentPinballGame->gulpinDisplayedLevel = 0;
+                }
+
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 60 || gCurrentPinballGame->gulpinAnimFrameIndex == 69 || gCurrentPinballGame->gulpinAnimFrameIndex == 78)
+                    m4aSongNumStart(SE_GULPIN_LANDS_OR_LEAVES);
+            }
+        }
+    }
+    else if (gCurrentPinballGame->gulpinDisplayedLevel < gCurrentPinballGame->travelTrackerCount)
+    {
+        if (gulpinFramesetData[1] <= gCurrentPinballGame->gulpinAnimFrameTimer)
+        {
+            gCurrentPinballGame->gulpinAnimFrameTimer = 1;
+            gCurrentPinballGame->gulpinAnimFrameIndex++;
+            if (gCurrentPinballGame->travelTrackerCount == 1)
+            {
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 9)
+                {
+                    gCurrentPinballGame->gulpinDisplayedLevel = 1;
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 84;
+                }
+
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 6)
+                    m4aSongNumStart(SE_GULPIN_LANDS_OR_LEAVES);
+            }
+            else if (gCurrentPinballGame->travelTrackerCount == 2)
+            {
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 23)
+                {
+                    gCurrentPinballGame->gulpinDisplayedLevel = 2;
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 95;
+                }
+
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 20)
+                    m4aSongNumStart(SE_GULPIN_LANDS_OR_LEAVES);
+            }
+            else if (gCurrentPinballGame->travelTrackerCount == 3)
+            {
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 35)
+                {
+                    gCurrentPinballGame->gulpinDisplayedLevel = 3;
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 35;
+                    RequestBoardStateTransition(MAIN_BOARD_STATE_TRAVEL_MODE);
+                }
+
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 32)
+                    m4aSongNumStart(SE_GULPIN_LANDS_OR_LEAVES);
+            }
+        }
+        else
+        {
+            gCurrentPinballGame->gulpinAnimFrameTimer++;
+        }
+    }
+    else if (gCurrentPinballGame->travelTrackerCount)
+    {
+        if (gulpinFramesetData[1] > gCurrentPinballGame->gulpinAnimFrameTimer)
+        {
+            gCurrentPinballGame->gulpinAnimFrameTimer++;
+        }
+        else
+        {
+            gCurrentPinballGame->gulpinAnimFrameTimer = 1;
+            gCurrentPinballGame->gulpinAnimFrameIndex++;
+            if (gCurrentPinballGame->travelTrackerCount == 1)
+            {
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 95)
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 84;
+            }
+            else if (gCurrentPinballGame->travelTrackerCount == 2)
+            {
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 109)
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 95;
+            }
+            else if (gCurrentPinballGame->travelTrackerCount == 3)
+            {
+                if (gCurrentPinballGame->gulpinAnimFrameIndex == 60)
+                    gCurrentPinballGame->gulpinAnimFrameIndex = 35;
+            }
+        }
+    }
+
+    index = gulpinFramesetData[0];
+    DmaCopy16(3, gRubyStageGulpin_Gfx[gulpinFramesetData[2]], OBJ_VRAM_ADDR_GULPIN_3_TILES, SIZE_OF_VRAM_GULPIN_TILES);
+    DmaCopy16(3, gRubyStageGulpin_Gfx[gulpinFramesetData[3]], OBJ_VRAM_ADDR_GULPIN_2_TILES, SIZE_OF_VRAM_GULPIN_TILES);
+    DmaCopy16(3, gRubyStageGulpin_Gfx[gulpinFramesetData[4]], OBJ_VRAM_ADDR_GULPIN_1_TILES, SIZE_OF_VRAM_GULPIN_TILES);
+    for (i = 0; i < 6; i++)
+    {
+        oamSimple = &group->oam[i];
+        dst = (u16 *)&gOamBuffer[oamSimple->oamId];
+        *dst++ = gGulpinOamData[index][i * 3 + 0];
+        *dst++ = gGulpinOamData[index][i * 3 + 1];
+        *dst++ = gGulpinOamData[index][i * 3 + 2];
+
+        gOamBuffer[oamSimple->oamId].x += group->baseX;
+        gOamBuffer[oamSimple->oamId].y += group->baseY;
+    }
+}
+
+void UpdateLinooneSideBumpers(void)
+{
+    s16 i;
+
+    for (i = 0; i < SIDE_COUNT; i++)
+    {
+        if (gCurrentPinballGame->linooneSideBumperExtensionsPending[i] > 0)
+        {
+            if (gLinooneBumperGfxFrameIndices[gCurrentPinballGame->linooneSideBumperAnimPhase[i]][1] > gCurrentPinballGame->linooneSideBumperAnimTimer[i])
+            {
+                gCurrentPinballGame->linooneSideBumperAnimTimer[i]++;
+            }
+            else
+            {
+                gCurrentPinballGame->linooneSideBumperAnimTimer[i] = 0;
+                gCurrentPinballGame->linooneSideBumperAnimPhase[i]++;
+                if (gCurrentPinballGame->linooneSideBumperAnimPhase[i] > 11)
+                {
+                    gCurrentPinballGame->linooneSideBumperAnimPhase[i] = 0;
+                    gCurrentPinballGame->linooneSideBumperExtensionsPending[i]--;
+                }
+            }
+
+            if (gCurrentPinballGame->linooneSideBumperAnimPhase[i] == 1)
+                gCurrentPinballGame->linooneSideBumperExtensionOffset[i] = gCurrentPinballGame->linooneSideBumperAnimTimer[i] / 2;
+
+            if (gCurrentPinballGame->linooneSideBumperAnimPhase[i] == 11)
+                gCurrentPinballGame->linooneSideBumperExtensionOffset[i] = 14 - gCurrentPinballGame->linooneSideBumperAnimTimer[i] / 2;
+
+            if (gCurrentPinballGame->linooneSideBumperExtensionOffset[i] < 3)
+                gCurrentPinballGame->linooneSideBumperExtensionOffset[i] = 3;
+        }
+    }
+
+    if (gCurrentPinballGame->linooneSideBumperHitFlag)
+    {
+        if (gCurrentPinballGame->linooneSideBumperHitFlag == SIDE_COLLISION_LEFT)
+        {
+            if (gCurrentPinballGame->boardState != MAIN_BOARD_STATE_TRAVEL_MODE)
+            {
+                if (BoardNotInActivityMode) {
+                    if (gCurrentPinballGame->travelTrackerCount < 3)
+                    {
+                        gCurrentPinballGame->travelTrackerCount++;
+                        if (gCurrentPinballGame->travelTrackerCount == 1)
+                        {
+                            gCurrentPinballGame->gulpinAnimFrameIndex = 0;
+                            gCurrentPinballGame->gulpinAnimFrameTimer = 0;
+                        }
+                        else if (gCurrentPinballGame->travelTrackerCount == 2)
+                        {
+                            gCurrentPinballGame->gulpinAnimFrameIndex = 12;
+                            gCurrentPinballGame->gulpinAnimFrameTimer = 0;
+                        }
+                        else if (gCurrentPinballGame->travelTrackerCount == 3)
+                        {
+                            gCurrentPinballGame->gulpinAnimFrameIndex = 24;
+                            gCurrentPinballGame->gulpinAnimFrameTimer = 0;
+                            gCurrentPinballGame->travelModeStartDelay = 1;
+                        }
+                    }
+                }
+                else
+                {
+                    if (gCurrentPinballGame->travelTrackerCount < 2)
+                    {
+                        gCurrentPinballGame->travelTrackerCount++;
+                        if (gCurrentPinballGame->travelTrackerCount == 1)
+                        {
+                            gCurrentPinballGame->gulpinAnimFrameIndex = 0;
+                            gCurrentPinballGame->gulpinAnimFrameTimer = 0;
+                        }
+                        else if (gCurrentPinballGame->travelTrackerCount == 2)
+                        {
+                            gCurrentPinballGame->gulpinAnimFrameIndex = 12;
+                            gCurrentPinballGame->gulpinAnimFrameTimer = 0;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (gCurrentPinballGame->makuhitaState == MAKUHITA_STATE_INACTIVE)
+                gCurrentPinballGame->makuhitaState = MAKUHITA_STATE_NEUTRAL_READY;
+            else
+                gCurrentPinballGame->makuhitaState = MAKUHITA_STATE_INACTIVE;
+        }
+
+        gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_LEFT] = 0;
+        gCurrentPinballGame->linooneSideBumperExtensionsPending[SIDE_IX_RIGHT] = 0;
+        gCurrentPinballGame->linooneSideBumperHitFlag = SIDE_COLLISION_NONE;
+        PlayRumble(7);
+        m4aSongNumStart(SE_CYNDAQUIL_EGG_GUARD_HIT);
+        gCurrentPinballGame->scoreAddedInFrame = SCORE_LINOONE_BUMPER_HIT;
+        gCurrentPinballGame->linooneSideBumperAnimPhase[SIDE_IX_LEFT] = 0;
+        gCurrentPinballGame->linooneSideBumperAnimPhase[SIDE_IX_RIGHT] = 0;
+        gCurrentPinballGame->linooneSideBumperAnimTimer[SIDE_IX_LEFT] = 0;
+        gCurrentPinballGame->linooneSideBumperAnimTimer[SIDE_IX_RIGHT] = 0;
+        gCurrentPinballGame->linooneSideBumperExtensionOffset[SIDE_IX_LEFT] = 3;
+        gCurrentPinballGame->linooneSideBumperExtensionOffset[SIDE_IX_RIGHT] = 3;
+    }
+}
+
+void DrawRubySideBumperSprites(void)
+{
+    s16 i, j;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    s16 index;
+
+    for (i = 0; i < SIDE_COUNT; i++)
+    {
+        index = gLinooneBumperGfxFrameIndices[gCurrentPinballGame->linooneSideBumperAnimPhase[i]][0];
+        DmaCopy16(3, gLinooneBumperGfx[index], OBJ_VRAM_ADDR_LINOONE_TILES_FOR_SIDE(i), SIZE_OF_VRAM_RUBY_LINOONE_TILES);
+        group = &gMain.spriteGroups[SG_RUBY_LINOONE_LEFT + i];
+        if (group->active)
+        {
+            int var0 = i * 120 - (gCurrentPinballGame->cameraXOffset - 48);
+            group->baseX = var0 + ((1 - (i * 2)) * (gCurrentPinballGame->linooneSideBumperExtensionOffset[i] - 14));
+            group->baseY = 301 - gCurrentPinballGame->cameraYOffset;
+            for (j = 0; j < 3; j++)
+            {
+                oamSimple = &group->oam[j];
+                gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+                gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+            }
+        }
+    }
+
+    if (gCurrentPinballGame->travelModeStartDelay)
+    {
+        gCurrentPinballGame->travelModeStartDelay--;
+        if (gCurrentPinballGame->travelModeStartDelay == 0)
+        {
+            if (gCurrentPinballGame->activeFxType)
+                gCurrentPinballGame->travelModeStartDelay = 1;
+            else
+                gCurrentPinballGame->activeFxType = FX_MODE_START_BANNER;
+
+            if (gCurrentPinballGame->travelModeStartDelay == 0)
+            {
+                gMain.modeChangeFlags |= MODE_CHANGE_BANNER;
+                gCurrentPinballGame->bannerDelayTimer = 70;
+                gCurrentPinballGame->bannerDisplayTimer = 160;
+                gCurrentPinballGame->cameraYScrollTarget = 0;
+                gCurrentPinballGame->cameraYAdjust = 0;
+                gCurrentPinballGame->cameraYScrollSpeed = 0;
+                gCurrentPinballGame->bannerGfxIndex = BANNER_MODE_TRAVEL;
+                gCurrentPinballGame->bannerActive = TRUE;
+                gCurrentPinballGame->holdCameraLockAfterBanner = FALSE;
+                gCurrentPinballGame->bannerDisplayDuration = 120;
+                gCurrentPinballGame->bannerSlidePosition = 0;
+                gCurrentPinballGame->bannerSlideTimer = 50;
+                gCurrentPinballGame->bannerSlideVelocity = 0;
+                DmaCopy16(3, gModeBannerTilemaps[4], OBJ_VRAM_ADDR_FX_BASE, SIZE_OF_VRAM_MODE_BANNER_LOAD_TILES);
+                DmaCopy16(3, gModeBanner_Pals[4], OBJ_PLTT_SLOT(PAL_IX_BANNER), PLTT_SLOT_SIZE);
+                gMain.blendControl = 0xCE;
+            }
+        }
+    }
+}
+

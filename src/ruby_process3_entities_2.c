@@ -1,0 +1,930 @@
+#include "global.h"
+#include "m4a.h"
+#include "main.h"
+#include "constants/bg_music.h"
+#include "constants/board/ruby_states.h"
+#include "constants/mem_layout/ruby.h"
+
+// Rom_1 data
+extern const s16 gPondBumperTransitionFrames[];
+extern const s16 gLotadBobOffsets[];
+extern const Palette gChinchouBumper_Pals[];
+extern const Palette gLotadBumper_Pals[];
+extern const Palette gWhiscash_Pals[];
+extern const u8 gChinchouBumper_Gfx[][SIZE_OF_VRAM_RUBY_BUMPER_TILES];
+extern const u8 gLotadBumper_Gfx[][SIZE_OF_VRAM_RUBY_BUMPER_TILES];
+extern const u8 gRubyStageNuzleaf_Gfx[][SIZE_OF_VRAM_NUZLEAF_RAW_TILES];
+extern const u8 gWhiscash_Gfx[][SIZE_OF_VRAM_WHISCASH_RAW_TILES];
+extern const u8 gRubyBoardShopDoor_Gfx[][SIZE_OF_VRAM_RUBY_MART_DOOR_TILES];
+extern const u8 gRubyBoardSharpedo_Gfx[][SIZE_OF_VRAM_SHARPEDO_TILES];
+
+extern const struct SongHeader se_whiscash_splashdown;
+
+// Rom_2 data
+extern const s16 gNuzleafAnimFrameData[50][3];
+extern const s16 gNuzleafPositions[][2]; // TODO: Would be a Vector16, if it didn't impact compilation.
+extern const s16 gWhiscashFramesetData[][4];
+extern const struct Vector16 gChinchouWaypointPositions[];
+extern const s16 gWhiscashShakeOffsets[];
+extern const s16 gSharpedoAnimFrameData[][2];
+extern const u16 gNuzleafOamData[58][6];
+extern const u16 gSharpedoSpritesheetOam[42][3][3];
+
+#define MIN_POND_SWITCHES_BEFORE_WHISCASH_AVAILABLE 3
+
+void UpdateNuzleafEntity(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    u16 * dst;
+    s16 nextTileIx;
+    s16 oamIx;
+
+    group = &gMain.spriteGroups[SG_RUBY_NUZLEAF];
+    nextTileIx = 0;
+    oamIx = 0;
+    switch (gCurrentPinballGame->nuzleafEntityState)
+    {
+    case NUZLEAF_STATE_IDLE_CYCLE:
+        nextTileIx = (gMain.systemFrameCount % 36) / 18;
+        oamIx = nextTileIx;
+        break;
+    case NUZLEAF_STATE_HIT_ON_RAMP:
+        gCurrentPinballGame->nuzleafFrameTimer = 0;
+        gCurrentPinballGame->nuzleafFrameIndex = 0;
+        gCurrentPinballGame->nuzleafEntityState = NUZLEAF_STATE_KNOCKED_BACK;
+        oamIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][0];
+        nextTileIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][2];
+        m4aSongNumStart(SE_NUZLEAF_HIT);
+        PlayRumble(7);
+        gCurrentPinballGame->scoreAddedInFrame = SCORE_NUZLEAF_LOWER_HIT;
+        break;
+    case NUZLEAF_STATE_KNOCKED_BACK:
+        if (gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][1] > gCurrentPinballGame->nuzleafFrameTimer)
+        {
+            gCurrentPinballGame->nuzleafFrameTimer++;
+        }
+        else
+        {
+            gCurrentPinballGame->nuzleafFrameTimer = 0;
+            gCurrentPinballGame->nuzleafFrameIndex++;
+            if (gCurrentPinballGame->nuzleafFrameIndex == 7)
+            {
+                gCurrentPinballGame->nuzleafEntityState = NUZLEAF_STATE_IDLE_CYCLE;
+                gCurrentPinballGame->nuzleafFrameIndex = 0;
+                gCurrentPinballGame->nuzleafPositionIndex = 1;
+            }
+        }
+        oamIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][0];
+        nextTileIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][2];
+        break;
+    case NUZLEAF_STATE_HIT_AT_EDGE:
+        gCurrentPinballGame->nuzleafFrameTimer = 0;
+        gCurrentPinballGame->nuzleafFrameIndex = 7;
+        gCurrentPinballGame->nuzleafEntityState = NUZLEAF_STATE_TEETERING;
+        oamIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][0];
+        nextTileIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][2];
+        m4aSongNumStart(SE_NUZLEAF_HIT);
+        PlayRumble(7);
+        gCurrentPinballGame->scoreAddedInFrame = SCORE_NUZLEAF_UPPER_HIT;
+        break;
+    case NUZLEAF_STATE_TEETERING:
+        if (gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][1] > gCurrentPinballGame->nuzleafFrameTimer)
+        {
+            gCurrentPinballGame->nuzleafFrameTimer++;
+        }
+        else
+        {
+            gCurrentPinballGame->nuzleafFrameTimer = 0;
+            gCurrentPinballGame->nuzleafFrameIndex++;
+            if (gCurrentPinballGame->nuzleafFrameIndex == 18)
+            {
+                gCurrentPinballGame->nuzleafEntityState = NUZLEAF_STATE_HANGS_OVER_GAP;
+                m4aSongNumStart(SE_NUZLEAF_FORMS_BRIDGE);
+            }
+        }
+
+        if (gCurrentPinballGame->nuzleafFrameTimer == 6)
+            m4aSongNumStart(SE_NUZLEAF_TEETERING);
+
+        oamIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][0];
+        nextTileIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][2];
+        break;
+    case NUZLEAF_STATE_HANGS_OVER_GAP:
+    case NUZLEAF_STATE_READY_TO_RESET:
+        if (gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][1] > gCurrentPinballGame->nuzleafFrameTimer)
+        {
+            gCurrentPinballGame->nuzleafFrameTimer++;
+        }
+        else
+        {
+            gCurrentPinballGame->nuzleafFrameTimer = 0;
+            gCurrentPinballGame->nuzleafFrameIndex++;
+            if (gCurrentPinballGame->nuzleafFrameIndex == 24)
+                gCurrentPinballGame->nuzleafFrameIndex = 18;
+        }
+
+        oamIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][0];
+        nextTileIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][2];
+        break;
+    case NUZLEAF_STATE_RESET_AT_LOWER_POSITION:
+        gCurrentPinballGame->nuzleafHitFlag = 0;
+        gCurrentPinballGame->nuzleafPositionIndex = 0;
+        gCurrentPinballGame->nuzleafFrameTimer = 0;
+        gCurrentPinballGame->nuzleafFrameIndex = 0;
+        gCurrentPinballGame->nuzleafEntityState = NUZLEAF_STATE_IDLE_CYCLE;
+        gCurrentPinballGame->nuzleafFrameIndex = 24;
+        oamIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][0];
+        nextTileIx = gNuzleafAnimFrameData[gCurrentPinballGame->nuzleafFrameIndex][2];
+        break;
+    }
+
+    if (group->active)
+    {
+        group->baseX = gNuzleafPositions[gCurrentPinballGame->nuzleafPositionIndex][0] - gCurrentPinballGame->cameraXOffset;
+        group->baseY = gNuzleafPositions[gCurrentPinballGame->nuzleafPositionIndex][1] - gCurrentPinballGame->cameraYOffset;
+        DmaCopy16(3, gRubyStageNuzleaf_Gfx[gCurrentPinballGame->nuzleafGfxTileIndex], OBJ_VRAM_ADDR_NUZLEAF_TILES, SIZE_OF_VRAM_NUZLEAF_TILES);
+        for (i = 0; i < 2; i++)
+        {
+            oamSimple = &group->oam[i];
+            dst = (u16 *)&gOamBuffer[oamSimple->oamId];
+            *dst++ = gNuzleafOamData[oamIx][i * 3 + 0];
+            *dst++ = gNuzleafOamData[oamIx][i * 3 + 1];
+            *dst++ = gNuzleafOamData[oamIx][i * 3 + 2];
+
+            gOamBuffer[oamSimple->oamId].x += group->baseX;
+            gOamBuffer[oamSimple->oamId].y += group->baseY;
+        }
+    }
+
+    gCurrentPinballGame->nuzleafGfxTileIndex = nextTileIx;
+}
+
+void SelectRubyShopDoorState(void)
+{
+    if (gCurrentPinballGame->ballCatchState != TRAP_EVO_SHOP_HOLE)
+    {
+        if (BoardNotInActivityMode)
+        {
+            if (!gCurrentPinballGame->evolutionShopActive)
+                gCurrentPinballGame->shopDoorTargetFrame = gCurrentPinballGame->shopDoorOpenLevel & 0xF;
+            else
+                gCurrentPinballGame->shopDoorTargetFrame = 3;
+        }
+        else if (gCurrentPinballGame->boardState != MAIN_BOARD_STATE_EVO_MODE)
+        {
+            gCurrentPinballGame->shopDoorTargetFrame = 0;
+        }
+    }
+}
+
+void AnimateRubyShopDoor(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    s16 priority;
+
+    group = &gMain.spriteGroups[SG_RUBY_MART_DOOR];
+    if ((gCurrentPinballGame->shopDoorTargetFrame & 0xF) != gCurrentPinballGame->shopDoorCurrentFrame)
+    {
+        if (gCurrentPinballGame->shopDoorAnimDelay)
+        {
+            if (gCurrentPinballGame->shopDoorAnimDelay == 5)
+            {
+                gMain.modeChangeFlags |= MODE_CHANGE_BANNER;
+                gCurrentPinballGame->bannerDelayTimer = 0;
+                gCurrentPinballGame->bannerDisplayTimer = 3;
+                gCurrentPinballGame->cameraYScrollTarget = 0;
+                gCurrentPinballGame->cameraYAdjust = 0;
+                gCurrentPinballGame->cameraYScrollSpeed = 0;
+                gCurrentPinballGame->bannerGfxIndex = BANNER_MODE_NONE;
+                gCurrentPinballGame->bannerActive = TRUE;
+                gCurrentPinballGame->holdCameraLockAfterBanner = FALSE;
+                m4aSongNumStart(SE_RUBY_MART_GATE_OPEN);
+            }
+
+            gCurrentPinballGame->shopDoorAnimDelay--;
+        }
+        else
+        {
+            if (gCurrentPinballGame->shopDoorCurrentFrame > (gCurrentPinballGame->shopDoorTargetFrame & 0xF))
+            {
+                gCurrentPinballGame->shopDoorCurrentFrame--;
+                gCurrentPinballGame->shopDoorAnimDelay = 4;
+            }
+            else
+            {
+                gCurrentPinballGame->shopDoorCurrentFrame++;
+                gCurrentPinballGame->shopDoorAnimDelay = 4;
+            }
+
+            DmaCopy16(3, gRubyBoardShopDoor_Gfx[gCurrentPinballGame->shopDoorCurrentFrame], OBJ_VRAM_ADDR_RUBY_MART_DOOR_TILES, SIZE_OF_VRAM_RUBY_MART_DOOR_TILES);
+        }
+    }
+
+    if (gCurrentPinballGame->shopDoorCurrentFrame < 3)
+        priority = 3;
+    else
+        priority = 2;
+
+    group->baseX = 208 - gCurrentPinballGame->cameraXOffset;
+    group->baseY = 80 - gCurrentPinballGame->cameraYOffset;
+    for (i = 0; i < 2; i++)
+    {
+        oamSimple = &gMain.spriteGroups[SG_RUBY_MART_DOOR].oam[i];
+        gOamBuffer[oamSimple->oamId].priority = priority;
+        gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+        gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+    }
+}
+
+void DrawWhiscash(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    s16 frameIx;
+    const s16 *frameData;
+
+    group = &gMain.spriteGroups[SG_RUBY_WHISCASH];
+    frameData = gWhiscashFramesetData[gCurrentPinballGame->whiscashFrameIx];
+    if (group->active)
+    {
+        frameIx = frameData[0];
+        DmaCopy16(3, gWhiscash_Pals[3*gCurrentPinballGame->paletteDimmingIx], OBJ_PLTT_SLOT(PAL_IX_RUBY_BUMPERS), PLTT_SLOT_SIZE);
+        DmaCopy16(3, gWhiscash_Gfx[frameIx], OBJ_VRAM_ADDR_WHISCASH_TILES, SIZE_OF_VRAM_WHISCASH_TILES);
+        gCurrentPinballGame->rubyBumperCollisionPosition[0].x = -248;
+        gCurrentPinballGame->rubyBumperCollisionPosition[0].y = -316;
+        group->baseX = frameData[2] + 124u - gCurrentPinballGame->cameraXOffset;
+        group->baseY = frameData[3] + 150u - gCurrentPinballGame->cameraYOffset;
+        for (i = 0; i < 4; i++)
+        {
+            oamSimple = &group->oam[i];
+            gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+            gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+        }
+
+        if (frameIx == 4 || frameIx == 10)
+            gCurrentPinballGame->whiscashInvulnerable = 0;
+        else
+            gCurrentPinballGame->whiscashInvulnerable = 1;
+    }
+}
+
+//Ruby Pond
+void RubyPond_EntityLogic(void)
+{
+    s16 i;
+    u16 angle;
+    u16 angle2;
+    s16 var1;
+    s16 frameDecidedNextPondState;
+    struct Vector32 tempVec;
+    struct Vector32 tempVec2;
+    int squaredDistance;
+
+    if (gCurrentPinballGame->shouldProcessWhiscash)
+    {
+        // If board is currently in one of the modes (catch/etc) force reset to the 3 chinchou
+        if (BoardInActivityMode)
+            gCurrentPinballGame->rubyPondContentsChanging = TRUE;
+
+        // Don't immediately force change state if Wishcash is actively doing something
+        if (gCurrentPinballGame->rubyPondContentsChanging)
+        {
+            if (gCurrentPinballGame->whiscashState < WHISCASH_STATE_ABSORB_ZONE_HIT)
+            {
+                gCurrentPinballGame->whiscashState = WHISCASH_STATE_LEAVING;
+                gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_LEAVING-1;
+                gCurrentPinballGame->whiscashStateTimer = 0;
+            }
+
+            gCurrentPinballGame->rubyPondContentsChanging = FALSE;
+        }
+
+        switch (gCurrentPinballGame->whiscashState)
+        {
+        case WHISCASH_STATE_ARRIVAL:
+            if (gWhiscashFramesetData[gCurrentPinballGame->whiscashFrameIx][1] > gCurrentPinballGame->whiscashStateTimer)
+            {
+                gCurrentPinballGame->whiscashStateTimer++;
+            }
+            else
+            {
+                gCurrentPinballGame->whiscashStateTimer = 0;
+                gCurrentPinballGame->whiscashFrameIx++;
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SITTING)
+                    gCurrentPinballGame->whiscashState = WHISCASH_STATE_SITTING;
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SPLASH)
+                    m4aSongNumStart(SE_WHISCASH_EMERGE_SPLASH);
+            }
+            break;
+        case WHISCASH_STATE_SITTING:
+            // Alternates between frame 4 and 5
+            gCurrentPinballGame->whiscashFrameIx = (gCurrentPinballGame->whiscashStateTimer % 44) / 22 + 4;
+            gCurrentPinballGame->whiscashStateTimer++;
+            break;
+        case WHISCASH_STATE_ABSORB_ZONE_HIT:
+            gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_ABSORB_BALL_START;
+            gCurrentPinballGame->whiscashStateTimer = 0;
+            gCurrentPinballGame->whiscashState = WHISCASH_STATE_ABSORBING;
+            gCurrentPinballGame->ball->oamPriority = 0;
+            gCurrentPinballGame->scoreAddedInFrame = SCORE_WHISCASH_ABSORBS_BALL;
+            m4aSongNumStart(SE_WHISCASH_CATCH_BALL);
+            PlayRumble(7);
+            break;
+        case WHISCASH_STATE_ABSORBING:
+            if (gWhiscashFramesetData[gCurrentPinballGame->whiscashFrameIx][1] > gCurrentPinballGame->whiscashStateTimer)
+            {
+                gCurrentPinballGame->whiscashStateTimer++;
+            }
+            else
+            {
+                gCurrentPinballGame->whiscashStateTimer = 0;
+                gCurrentPinballGame->whiscashFrameIx++;
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_BALL_HELD_SUNK+1)
+                {
+                    gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_BALL_HELD_SUNK;
+                    gCurrentPinballGame->whiscashStateTimer = 65;
+                    gCurrentPinballGame->whiscashState = WHISCASH_STATE_TO_SPHEAL_BOARD;
+                }
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_LEAVING)
+                    m4aSongNumStart(SE_WHISCASH_LEAVE_BURBLE);
+            }
+
+            if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_ABSORB_BALL_START)
+            {
+                gCurrentPinballGame->ball->spinAngle += 64;
+                gCurrentPinballGame->ball->positionQ8.x = 0x8900;
+                gCurrentPinballGame->ball->positionQ8.y = 0xBD00;
+                gCurrentPinballGame->ball->velocity.x = 0;
+                gCurrentPinballGame->ball->velocity.y = 0;
+            }
+
+            if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_ABSORB_BALL_START+1)
+            {
+                gCurrentPinballGame->ball->spinAngle += 64;
+                gCurrentPinballGame->ball->positionQ8.x = 0x8C00;
+                gCurrentPinballGame->ball->positionQ8.y = 0xB700;
+                gCurrentPinballGame->ball->velocity.x = 0;
+                gCurrentPinballGame->ball->velocity.y = 0;
+            }
+
+            if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_ABSORB_BALL_START+2)
+                gCurrentPinballGame->ball->ballHidden = TRUE;
+            break;
+        case WHISCASH_STATE_TO_SPHEAL_BOARD:
+            gCurrentPinballGame->startButtonDisabled = TRUE;
+            if (gCurrentPinballGame->whiscashStateTimer == 65)
+            {
+                m4aSongNumStart(SE_WARP);
+                gMain.blendControl = 0x9E;
+            }
+
+            if (gCurrentPinballGame->whiscashStateTimer)
+            {
+                gCurrentPinballGame->whiscashStateTimer--;
+                gMain.blendBrightness = 16 - gCurrentPinballGame->whiscashStateTimer / 4;
+                if (gCurrentPinballGame->whiscashStateTimer == 0)
+                {
+                    gCurrentPinballGame->nextBonusField = FIELD_SPHEAL;
+                    gCurrentPinballGame->bonusReturnState = BONUS_RETURN_LOCATION_WHISCASH;
+                    gCurrentPinballGame->arrowProgressPreserved = gCurrentPinballGame->evoArrowProgress;
+                    gCurrentPinballGame->catchModeArrows = gCurrentPinballGame->catchArrowProgress;
+                    TransitionToBonusField();
+                }
+            }
+            break;
+        case WHISCASH_STATE_INIT_RETURN_FROM_BONUS: //from board initialization
+            gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_DELIVER_BALL_START;
+            gCurrentPinballGame->whiscashStateTimer = 0;
+            gCurrentPinballGame->whiscashState = WHISCASH_STATE_RISE_SPIT_LEAVE;
+            gCurrentPinballGame->ball->oamPriority = 0;
+            break;
+        case WHISCASH_STATE_RISE_SPIT_LEAVE:
+            if (gWhiscashFramesetData[gCurrentPinballGame->whiscashFrameIx][1] > gCurrentPinballGame->whiscashStateTimer)
+            {
+                gCurrentPinballGame->whiscashStateTimer++;
+            }
+            else
+            {
+                gCurrentPinballGame->whiscashStateTimer = 0;
+                gCurrentPinballGame->whiscashFrameIx++;
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_DELIVER_BALL_END+1)
+                {
+                    gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_SUBMERGED;
+                    gCurrentPinballGame->whiscashState = WHISCASH_STATE_CLEANUP;
+                }
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SPITBALL + 1)
+                {
+                    gCurrentPinballGame->ball->spinAngle -= 64;
+                    gCurrentPinballGame->ball->positionQ8.x = 0x8300;
+                    gCurrentPinballGame->ball->positionQ8.y = 0xC700;
+                    gCurrentPinballGame->ball->velocity.x = -120;
+                    gCurrentPinballGame->ball->velocity.y = 210;
+                    gCurrentPinballGame->ball->oamPriority = 3;
+                }
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_EMERGING)
+                    m4aSongNumStart(SE_WHISCASH_EMERGE_SPLASH);
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SPITBALL + 7) {
+                    m4aSongNumStart(SE_WHISCASH_LEAVE_BURBLE);
+                }
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SPITBALL)
+                {
+                    m4aSongNumStart(SE_WHISCASH_SPIT_BALL);
+                }
+            }
+
+            if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SPITBALL)
+            {
+                gCurrentPinballGame->ball->ballHidden = FALSE;
+                gCurrentPinballGame->ball->spinAngle -= 64;
+                gCurrentPinballGame->ball->positionQ8.x = 0x8500;
+                gCurrentPinballGame->ball->positionQ8.y = 0xC000;
+                gCurrentPinballGame->ball->velocity.x = 0;
+                gCurrentPinballGame->ball->velocity.y = 0;
+            }
+
+            if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_SPITBALL+2)
+                gCurrentPinballGame->ballPhysicsState = BALL_PHYSICS_NORMAL;
+            break;
+        case WHISCASH_STATE_HIT:
+            gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_HIT;
+            gCurrentPinballGame->whiscashStateTimer = 0;
+            gCurrentPinballGame->whiscashState = WHISCASH_STATE_ANGRY;
+            gCurrentPinballGame->scoreAddedInFrame = SCORE_WHISCASH_HIT;
+            m4aSongNumStart(SE_BUMPER_HIT);
+            PlayRumble(7);
+            if (gCurrentPinballGame->saverTimeRemaining)
+                gCurrentPinballGame->saverTimeRemaining = 1;
+            break;
+        case WHISCASH_STATE_ANGRY:
+            if (gWhiscashFramesetData[gCurrentPinballGame->whiscashFrameIx][1] > gCurrentPinballGame->whiscashStateTimer)
+            {
+                gCurrentPinballGame->whiscashStateTimer++;
+            }
+            else
+            {
+                gCurrentPinballGame->whiscashStateTimer = 0;
+                gCurrentPinballGame->whiscashFrameIx++;
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_GONE_AFTER_HIT+1)
+                {
+                    gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_SUBMERGED;
+                    gCurrentPinballGame->whiscashState = WHISCASH_STATE_CLEANUP;
+                }
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_LEAVING_AFTER_HIT)
+                    m4aSongNumStart(SE_WHISCASH_LEAVE_BURBLE);
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_HIT+2)
+                    m4aSongNumStart(SE_WHISCASH_EARTHQUAKE);
+            }
+
+            // Heavy shaking starts
+            if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_GONE_AFTER_HIT)
+            {
+                gCurrentPinballGame->screenShakeX = gWhiscashShakeOffsets[gCurrentPinballGame->whiscashStateTimer % 8];
+                if (gCurrentPinballGame->whiscashStateTimer % 4 == 0)
+                    MPlayStart(&gMPlayInfo_SE3, &se_whiscash_splashdown);
+
+                if (gCurrentPinballGame->whiscashStateTimer % 10 == 0)
+                    PlayRumble(12);
+            }
+            break;
+        case WHISCASH_STATE_LEAVING: //Early Exit (mode started)
+            if (gWhiscashFramesetData[gCurrentPinballGame->whiscashFrameIx][1] > gCurrentPinballGame->whiscashStateTimer)
+            {
+                gCurrentPinballGame->whiscashStateTimer++;
+            }
+            else
+            {
+                gCurrentPinballGame->whiscashStateTimer = 0;
+                gCurrentPinballGame->whiscashFrameIx++;
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_BALL_HELD_SUNK+1)
+                {
+                    gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_SUBMERGED;
+                    gCurrentPinballGame->whiscashState = WHISCASH_STATE_CLEANUP;
+                }
+
+                if (gCurrentPinballGame->whiscashFrameIx == WHISCASH_FRAME_LEAVING)
+                    m4aSongNumStart(SE_WHISCASH_LEAVE_BURBLE);
+            }
+            break;
+        case WHISCASH_STATE_CLEANUP:
+            gCurrentPinballGame->shouldProcessWhiscash = FALSE;
+            gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_SUBMERGED;
+            gCurrentPinballGame->whiscashStateTimer = 0;
+            gCurrentPinballGame->rubyPondContentsChanging = TRUE;
+            gCurrentPinballGame->rubyPondChangeTimer = 64;
+            gCurrentPinballGame->screenShakeX = 0;
+            break;
+        }
+    }
+    else
+    {
+        if (gCurrentPinballGame->rubyPondContentsChanging)
+        {
+            if (gCurrentPinballGame->rubyPondChangeTimer < 144)
+            {
+                gCurrentPinballGame->pondBumperStates[0] = gPondBumperTransitionFrames[gCurrentPinballGame->rubyPondChangeTimer / 8];
+                gCurrentPinballGame->pondBumperStates[1] = gCurrentPinballGame->pondBumperStates[0];
+                gCurrentPinballGame->pondBumperStates[2] = gCurrentPinballGame->pondBumperStates[0];
+            }
+            else
+            {
+                gCurrentPinballGame->rubyPondContentsChanging = FALSE;
+            }
+
+            if (gCurrentPinballGame->pondBumperStates[0] == 10)
+            {
+                if (gCurrentPinballGame->rubyPondChangeTimer % 8 == 0 && gCurrentPinballGame->rubyPondChangeTimer / 8 == 8)
+                {
+                    // Can't switch to Whiscash if in a catch/hatch/etc state, or if it hasn't yet hit a threshold
+                    // of pond states first.
+                    gCurrentPinballGame->pondSwitchesSinceLastWhiscash++;
+                    if (gCurrentPinballGame->pondSwitchesSinceLastWhiscash < MIN_POND_SWITCHES_BEFORE_WHISCASH_AVAILABLE ||
+                        BoardInActivityMode)
+                    {
+                        frameDecidedNextPondState = (gMain.systemFrameCount % 5) + 1;
+                        if (gCurrentPinballGame->rubyPondState == frameDecidedNextPondState)
+                            gCurrentPinballGame->rubyPondState = ((gMain.systemFrameCount + 1) % 5) + 1;
+                        else
+                            gCurrentPinballGame->rubyPondState = frameDecidedNextPondState;
+                    }
+                    else
+                    {
+                        frameDecidedNextPondState = (gMain.systemFrameCount % 6) + 1;
+                        if (gCurrentPinballGame->rubyPondState == frameDecidedNextPondState)
+                            gCurrentPinballGame->rubyPondState = ((gMain.systemFrameCount + 1) % 6) + 1;
+                        else
+                            gCurrentPinballGame->rubyPondState = frameDecidedNextPondState;
+                    }
+
+                    if (gCurrentPinballGame->forcePondToWhiscash)
+                    {
+                        gCurrentPinballGame->forcePondToWhiscash = FALSE;
+                        gCurrentPinballGame->rubyPondState = RUBY_POND_STATE_WHISCASH;
+                    }
+
+                    if (gCurrentPinballGame->rubyPondState == RUBY_POND_STATE_WHISCASH)
+                    {
+                        gCurrentPinballGame->shouldProcessWhiscash = TRUE;
+                        gCurrentPinballGame->whiscashState = WHISCASH_STATE_ARRIVAL;
+                        gCurrentPinballGame->whiscashStateTimer = 0;
+                        gCurrentPinballGame->whiscashFrameIx = WHISCASH_FRAME_SUBMERGED;
+                        gCurrentPinballGame->rubyPondContentsChanging = FALSE;
+                        gCurrentPinballGame->pondSwitchesSinceLastWhiscash = 0;
+                    }
+
+                    if (gCurrentPinballGame->rubyPondState == RUBY_POND_STATE_CHINCHOU_SINGLE_CLOCKWISE)
+                    {
+                        gCurrentPinballGame->rubyBumperLogicPosition[0].x = gChinchouWaypointPositions[0].x * 10;
+                        gCurrentPinballGame->rubyBumperLogicPosition[0].y = gChinchouWaypointPositions[0].y * 10;
+                    }
+                }
+            }
+
+            gCurrentPinballGame->rubyPondChangeTimer++;
+            if (gCurrentPinballGame->rubyPondChangeTimer == 32)
+                m4aSongNumStart(SE_RUBY_BUMPER_LEAVES);
+
+            switch (gCurrentPinballGame->rubyPondState)
+            {
+            case RUBY_POND_STATE_CHINCHOU_STAGGERED:
+            case RUBY_POND_STATE_CHINCHOU_CLOCKWISE:
+            case RUBY_POND_STATE_CHINCHOU_COUNTERCLOCKWISE:
+            case RUBY_POND_STATE_CHINCHOU_ROWS:
+                if (gCurrentPinballGame->rubyPondChangeTimer == 102)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                if (gCurrentPinballGame->rubyPondChangeTimer == 116)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                if (gCurrentPinballGame->rubyPondChangeTimer == 130)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                break;
+            case RUBY_POND_STATE_LOTAD:
+                if (gCurrentPinballGame->rubyPondChangeTimer == 102)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                if (gCurrentPinballGame->rubyPondChangeTimer == 118)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                if (gCurrentPinballGame->rubyPondChangeTimer == 134)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                break;
+            case RUBY_POND_STATE_CHINCHOU_SINGLE_CLOCKWISE:
+                if (gCurrentPinballGame->rubyPondChangeTimer == 104)
+                    m4aSongNumStart(SE_RUBY_BUMPER_EMERGES);
+                break;
+            }
+        }
+    }
+
+    switch (gCurrentPinballGame->rubyPondState)
+    {
+    case RUBY_POND_STATE_CHINCHOU_STAGGERED:
+        gCurrentPinballGame->rubyBumperLogicPosition[0].x = 1250;
+        gCurrentPinballGame->rubyBumperLogicPosition[0].y = 1270;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].x = 1600;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].y = 1360;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].x = 1370;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].y = 1610;
+        break;
+    case RUBY_POND_STATE_CHINCHOU_CLOCKWISE:
+        for (i = 0; i < 3; i++)
+        {
+            angle = (gCurrentPinballGame->globalAnimFrameCounter & 0x7F) * 0x200 + i * 0x5555;
+            var1 = (gCurrentPinballGame->globalAnimFrameCounter % 60) - 30;
+            if (var1 < 0)
+                var1 = -var1;
+
+            gCurrentPinballGame->bumperOrbitRadius = 180;
+            gCurrentPinballGame->rubyBumperLogicPosition[i].x = MulCos(gCurrentPinballGame->bumperOrbitRadius, angle) + 1380;
+            gCurrentPinballGame->rubyBumperLogicPosition[i].y = MulSin(gCurrentPinballGame->bumperOrbitRadius, angle) + 1500;
+        }
+        break;
+    case RUBY_POND_STATE_CHINCHOU_COUNTERCLOCKWISE:
+        for (i = 0; i < 3; i++)
+        {
+            angle = 10000 - ((gCurrentPinballGame->globalAnimFrameCounter & 0x7F) * 0x200 + i * 0x5555);
+            var1 = (gCurrentPinballGame->globalAnimFrameCounter % 60) - 30;
+            if (var1 < 0)
+                var1 = -var1;
+
+            gCurrentPinballGame->bumperOrbitRadius = 180;
+            gCurrentPinballGame->rubyBumperLogicPosition[i].x = MulCos(gCurrentPinballGame->bumperOrbitRadius, angle) + 1380;
+            gCurrentPinballGame->rubyBumperLogicPosition[i].y = MulSin(gCurrentPinballGame->bumperOrbitRadius, angle) + 1500;
+        }
+        break;
+    case RUBY_POND_STATE_CHINCHOU_ROWS:
+        for (i = 0; i < 2; i++)
+        {
+            var1 = 23 - (gCurrentPinballGame->globalAnimFrameCounter % 46);
+            if (var1 < 0)
+                var1 = -var1;
+
+            gCurrentPinballGame->rubyBumperLogicPosition[i + 1].x = (i * 33 + 121) * 10;
+            gCurrentPinballGame->rubyBumperLogicPosition[i + 1].y = var1 * 5 + 1340;
+        }
+
+        var1 = 23 - (gCurrentPinballGame->globalAnimFrameCounter + 23) % 46;
+        if (var1 < 0)
+            var1 = 0-var1;
+
+        gCurrentPinballGame->rubyBumperLogicPosition[0].x = 1370;
+        gCurrentPinballGame->rubyBumperLogicPosition[0].y = var1 * 5 + 1620;
+        break;
+    case RUBY_POND_STATE_LOTAD:
+        gCurrentPinballGame->rubyBumperLogicPosition[0].x = 1210;
+        gCurrentPinballGame->rubyBumperLogicPosition[0].y = gLotadBobOffsets[(gCurrentPinballGame->globalAnimFrameCounter % 60) / 10] + 1300;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].x = 1600;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].y = gLotadBobOffsets[((gCurrentPinballGame->globalAnimFrameCounter + 20) % 60) / 10] + 1410;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].x = 1370;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].y = gLotadBobOffsets[((gCurrentPinballGame->globalAnimFrameCounter + 40) % 60) / 10] + 1660;
+        break;
+    case RUBY_POND_STATE_CHINCHOU_SINGLE_CLOCKWISE:
+        tempVec.x = gChinchouWaypointPositions[gCurrentPinballGame->chinchouWaypointTarget].x * 10 - gCurrentPinballGame->rubyBumperLogicPosition[0].x;
+        tempVec.y = gChinchouWaypointPositions[gCurrentPinballGame->chinchouWaypointTarget].y * 10 - gCurrentPinballGame->rubyBumperLogicPosition[0].y;
+        squaredDistance = (tempVec.x * tempVec.x) + (tempVec.y * tempVec.y);
+        angle2 = ArcTan2(tempVec.x, -tempVec.y);
+        tempVec2.x = MulCos(7, angle2);
+        tempVec2.y = MulSin(-7, angle2);
+        gCurrentPinballGame->rubyBumperLogicPosition[0].x += tempVec2.x;
+        gCurrentPinballGame->rubyBumperLogicPosition[0].y += tempVec2.y;
+        if (squaredDistance < 2500)
+            gCurrentPinballGame->chinchouWaypointTarget = Random() % 4;
+
+        // moved off screen
+        gCurrentPinballGame->rubyBumperLogicPosition[1].x = 0;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].y = -300;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].x = 0;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].y = -300;
+        break;
+    case RUBY_POND_STATE_WHISCASH:
+        // moved off screen
+        gCurrentPinballGame->rubyBumperLogicPosition[0].x = 0;
+        gCurrentPinballGame->rubyBumperLogicPosition[0].y = -300;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].x = 0;
+        gCurrentPinballGame->rubyBumperLogicPosition[1].y = -300;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].x = 0;
+        gCurrentPinballGame->rubyBumperLogicPosition[2].y = -300;
+        break;
+    }
+}
+
+// Ruby pond bumpers Handle Hit and draw
+void RubyPondTriBumperHandleHitAndDraw(void)
+{
+    s16 i;
+    s16 j;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    s16 var0;
+
+    if (gCurrentPinballGame->bumperHitCountdown > 0)
+    {
+        if (gCurrentPinballGame->bumperHitCountdown == 2)
+        {
+            gCurrentPinballGame->scoreAddedInFrame = SCORE_BUMPER_HIT;
+            m4aSongNumStart(SE_BUMPER_HIT);
+            PlayRumble(7);
+            if (gCurrentPinballGame->boardState == MAIN_BOARD_STATE_CATCH_EM_MODE
+                && gCurrentPinballGame->boardSubState == CATCH_EM_SUBSTATE_AWAITING_BUMPER_HITS
+                && gCurrentPinballGame->catchTilesBumperAcknowledgedCount < 6)
+            {
+                if (gCurrentPinballGame->catchTilesBumperAcknowledgedCount == 0)
+                    gCurrentPinballGame->catchTilesBumperAcknowledgedCount = 1;
+                else if (gCurrentPinballGame->catchTilesBumperAcknowledgedCount == 1)
+                    gCurrentPinballGame->catchTilesBumperAcknowledgedCount = 3;
+                else
+                    gCurrentPinballGame->catchTilesBumperAcknowledgedCount = 6;
+
+                if (gCurrentPinballGame->catchTilesBumperAcknowledgedCount == 6)
+                {
+                    if (gCurrentPinballGame->catchTilesBoardAcknowledged == 0)
+                    {
+                        if (gCurrentPinballGame->rubyPondState == RUBY_POND_STATE_LOTAD)
+                        {
+                            gMain.modeChangeFlags |= MODE_CHANGE_BANNER;
+                            gCurrentPinballGame->bannerDelayTimer = 50;
+                            gCurrentPinballGame->bannerDisplayTimer = 600;
+                            gCurrentPinballGame->cameraYScrollTarget = 236;
+                            gCurrentPinballGame->cameraYAdjust = 0;
+                            gCurrentPinballGame->cameraYScrollSpeed = 4;
+                            gCurrentPinballGame->bannerGfxIndex = BANNER_MODE_LOTAD_CATCH_BURST;
+                            gCurrentPinballGame->bannerActive = TRUE;
+                            gCurrentPinballGame->holdCameraLockAfterBanner = FALSE;
+                            gCurrentPinballGame->bannerDisplayDuration = 80;
+                            gCurrentPinballGame->bannerSlidePosition = -2500;
+                            gCurrentPinballGame->bannerSlideTimer = 50;
+                            gCurrentPinballGame->bannerSlideVelocity = 0;
+                            DmaCopy16(3, gModeBannerTilemaps[6], OBJ_VRAM_ADDR_FX_BASE, SIZE_OF_VRAM_MODE_BANNER_LOAD_TILES);
+                            DmaCopy16(3, gModeBanner_Pals[6], OBJ_PLTT_SLOT(PAL_IX_BANNER), PLTT_SLOT_SIZE);
+                        }
+                        else
+                        {
+                            gMain.modeChangeFlags |= MODE_CHANGE_BANNER;
+                            gCurrentPinballGame->bannerDelayTimer = 50;
+                            gCurrentPinballGame->bannerDisplayTimer = 600;
+                            gCurrentPinballGame->cameraYScrollTarget = 236;
+                            gCurrentPinballGame->cameraYAdjust = 0;
+                            gCurrentPinballGame->cameraYScrollSpeed = 4;
+                            gCurrentPinballGame->bannerGfxIndex = BANNER_MODE_CHINCHOU_CATCH_BURST;
+                            gCurrentPinballGame->bannerActive = TRUE;
+                            gCurrentPinballGame->holdCameraLockAfterBanner = FALSE;
+                            gCurrentPinballGame->bannerDisplayDuration = 80;
+                            gCurrentPinballGame->bannerSlidePosition = -2500;
+                            gCurrentPinballGame->bannerSlideTimer = 50;
+                            gCurrentPinballGame->bannerSlideVelocity = 0;
+                            DmaCopy16(3, gModeBannerTilemaps[1], OBJ_VRAM_ADDR_FX_BASE, SIZE_OF_VRAM_MODE_BANNER_LOAD_TILES);
+                            DmaCopy16(3, gModeBanner_Pals[1], OBJ_PLTT_SLOT(PAL_IX_BANNER), PLTT_SLOT_SIZE);
+                        }
+
+                        gMain.blendControl = 0xCE;
+                    }
+                }
+            }
+
+            gCurrentPinballGame->pondEntitySpriteFlag++;
+            gCurrentPinballGame->bumperHitsSinceReset++;
+        }
+
+        gCurrentPinballGame->bumperHitCountdown--;
+    }
+
+    group = &gMain.spriteGroups[SG_RUBY_BUMPERS];
+    if (gCurrentPinballGame->rubyPondState == RUBY_POND_STATE_LOTAD)
+    {
+        for (i = 0; i < 3; i++)
+        {
+            if (gCurrentPinballGame->pondBumperStates[i])
+            {
+                if (gCurrentPinballGame->pondBumperStates[i] > 100)
+                {
+                    gCurrentPinballGame->pondBumperStates[i]--;
+                    if (gCurrentPinballGame->pondBumperStates[i] == 100)
+                        gCurrentPinballGame->pondBumperStates[i] = 0;
+
+                    var0 = 8;
+                }
+                else
+                {
+                    var0 = gCurrentPinballGame->pondBumperStates[i];
+                }
+            }
+            else
+            {
+                var0 = (gCurrentPinballGame->globalAnimFrameCounter % 50) / 25;
+            }
+
+#ifdef JVPPBPORT
+            // The pond's sink/rise animation only advances while play runs, so a
+            // banner or pop-up mid-change leaves the pond empty (blank "underwater"
+            // frames). The GBA's camera looks elsewhere then; the static view
+            // shows the pond, so draw the bumpers up until play resumes.
+            if (PortTableView() && gMain.modeChangeFlags != MODE_CHANGE_NONE
+                && gCurrentPinballGame->rubyPondContentsChanging
+                && gCurrentPinballGame->pondBumperStates[i] <= 100)
+                var0 = (gCurrentPinballGame->globalAnimFrameCounter % 50) / 25;
+#endif
+            DmaCopy16(3, gLotadBumper_Gfx[var0], OBJ_VRAM_ADDR_RUBY_BUMPER(i), SIZE_OF_VRAM_RUBY_BUMPER_TILES);
+        }
+
+        DmaCopy16(3, gLotadBumper_Pals[3*gCurrentPinballGame->paletteDimmingIx], OBJ_PLTT_SLOT(PAL_IX_RUBY_BUMPERS), PLTT_SLOT_SIZE);
+    }
+    else // chinchou
+    {
+        for (i = 0; i < 3; i++)
+        {
+            if (gCurrentPinballGame->pondBumperStates[i])
+            {
+                if (gCurrentPinballGame->pondBumperStates[i] > 100)
+                {
+                    var0 = 9 - gCurrentPinballGame->pondBumperStates[i] / 105;
+                    gCurrentPinballGame->pondBumperStates[i]--;
+                    if (gCurrentPinballGame->pondBumperStates[i] == 100)
+                        gCurrentPinballGame->pondBumperStates[i] = 0;
+                }
+                else
+                {
+                    var0 = gCurrentPinballGame->pondBumperStates[i];
+                }
+            }
+            else
+            {
+                var0 = (gCurrentPinballGame->globalAnimFrameCounter % 50) / 25;
+            }
+
+#ifdef JVPPBPORT
+            // The pond's sink/rise animation only advances while play runs, so a
+            // banner or pop-up mid-change leaves the pond empty (blank "underwater"
+            // frames). The GBA's camera looks elsewhere then; the static view
+            // shows the pond, so draw the bumpers up until play resumes.
+            if (PortTableView() && gMain.modeChangeFlags != MODE_CHANGE_NONE
+                && gCurrentPinballGame->rubyPondContentsChanging
+                && gCurrentPinballGame->pondBumperStates[i] <= 100)
+                var0 = (gCurrentPinballGame->globalAnimFrameCounter % 50) / 25;
+#endif
+            DmaCopy16(3, gChinchouBumper_Gfx[var0], OBJ_VRAM_ADDR_RUBY_BUMPER(i), SIZE_OF_VRAM_RUBY_BUMPER_TILES);
+        }
+
+        DmaCopy16(3, gChinchouBumper_Pals[3*gCurrentPinballGame->paletteDimmingIx], OBJ_PLTT_SLOT(PAL_IX_RUBY_BUMPERS), PLTT_SLOT_SIZE);
+    }
+
+    // Draw Bumpers: Lotad/chinchou
+    for (i = 0; i < 3; i++)
+    {
+        group->baseX = gCurrentPinballGame->rubyBumperLogicPosition[i].x / 10 - gCurrentPinballGame->cameraXOffset - 8;
+        group->baseY = gCurrentPinballGame->rubyBumperLogicPosition[i].y / 10 - gCurrentPinballGame->cameraYOffset - 4;
+        gCurrentPinballGame->rubyBumperCollisionPosition[i].x = (-(gCurrentPinballGame->rubyBumperLogicPosition[i].x / 10) + 8) * 2;
+        gCurrentPinballGame->rubyBumperCollisionPosition[i].y = (-(gCurrentPinballGame->rubyBumperLogicPosition[i].y / 10) + 7) * 2;
+        if (group->baseY < -40)
+            group->baseY = -40;
+
+        //sprites have a left/right half.
+        for (j = 0; j < 2; j++)
+        {
+            oamSimple = &group->oam[j + i * 2];
+            gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
+            gOamBuffer[oamSimple->oamId].y = oamSimple->yOffset + group->baseY;
+        }
+    }
+}
+
+void AnimateSharpedoEntity(void)
+{
+    s16 i;
+    struct SpriteGroup *group;
+    struct OamDataSimple *oamSimple;
+    u16 * dst;
+    const u16 * src;
+    s16 index;
+    s16 oamIx;
+
+    index = (gMain.systemFrameCount % 55) / 11;
+    group = &gMain.spriteGroups[SG_RUBY_SHARPEDO];
+    DmaCopy16(3, gRubyBoardSharpedo_Gfx[gCurrentPinballGame->sharpedoNextTileIx], OBJ_VRAM_ADDR_SHARPEDO_TILES, SIZE_OF_VRAM_SHARPEDO_TILES);
+    if (gCurrentPinballGame->catchHoleAnimFrame)
+        index = gCurrentPinballGame->catchHoleAnimFrame;
+
+    oamIx = gSharpedoAnimFrameData[index][0];
+    gCurrentPinballGame->sharpedoNextTileIx = gSharpedoAnimFrameData[index][1];
+    group->baseX = 179 - gCurrentPinballGame->cameraXOffset;
+    group->baseY = 174 - gCurrentPinballGame->cameraYOffset;
+    for (i = 0; i < 3; i++)
+    {
+        oamSimple = &group->oam[i];
+        dst = (u16*)&gOamBuffer[oamSimple->oamId];
+        src = gSharpedoSpritesheetOam[oamIx][i];
+        *dst++ = *src++;
+        *dst++ = *src++;
+        *dst++ = *src++;
+
+        gOamBuffer[oamSimple->oamId].x += group->baseX;
+        gOamBuffer[oamSimple->oamId].y += group->baseY;
+    }
+}

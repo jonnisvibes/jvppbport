@@ -1,0 +1,360 @@
+#include "global.h"
+#include "main.h"
+
+
+extern const struct OamData gEmptyOamData[128];
+
+static u8 *WriteDigitsRecursive(u32, u8*, u32);
+static int IntPow(int, int);
+
+void SetMainGameState(u16 mainState)
+{
+    gMain.mainState = mainState;
+    gMain.subState = 0;
+}
+
+void FadeInScreen(void)
+{
+    u16 i;
+
+    REG_BLDCNT = 0;
+    REG_BLDY = 0x10;
+    REG_BLDCNT = ((REG_DISPCNT & (DISPCNT_OBJ_ON | DISPCNT_BG_ALL_ON)) >> 8)
+                | BLDCNT_EFFECT_LIGHTEN
+                | BLDCNT_TGT1_BD;
+    REG_DISPCNT &= ~DISPCNT_FORCED_BLANK;
+    gMain.dispcntBackup = REG_DISPCNT;
+
+    for (i = 0; i < 32; i++)
+    {
+        REG_BLDY = 15 - i / 2;
+        MainLoopIter();
+    }
+
+    REG_BLDCNT = 0;
+}
+
+void FadeOutScreen(void)
+{
+    u16 i;
+
+    REG_BLDCNT = 0;
+    REG_BLDY = 0;
+    REG_BLDCNT = ((REG_DISPCNT & (DISPCNT_OBJ_ON | DISPCNT_BG_ALL_ON)) >> 8)
+                | BLDCNT_EFFECT_LIGHTEN
+                | BLDCNT_TGT1_BD;
+
+    for (i = 0; i < 16; i++)
+    {
+        REG_BLDY = i + 1;
+        MainLoopIter();
+    }
+
+    gMain.dispcntBackup |= DISPCNT_FORCED_BLANK;
+    REG_DISPCNT |= DISPCNT_FORCED_BLANK;
+    DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
+    REG_BG0HOFS = 0;
+    REG_BG0VOFS = 0;
+    REG_BG1HOFS = 0;
+    REG_BG1VOFS = 0;
+    REG_BG2HOFS = 0;
+    REG_BG2VOFS = 0;
+    REG_BG3HOFS = 0;
+    REG_BG3VOFS = 0;
+    REG_BLDCNT = 0;
+    REG_BLDY = 0;
+}
+
+s16 LoadSpriteSets(const struct SpriteSet *const *spriteSets, u16 numSpriteSets, struct SpriteGroup *spriteGroups)
+{
+    u16 i, j;
+    struct SpriteGroup *spriteGroup;
+    struct OamDataSimple *oamSimple;
+    u16 *oamData = (u16 *)(&gOamBuffer[0]);
+    u16 loadedCount = 0;
+
+    DmaCopy16(3, gEmptyOamData, oamData, sizeof(gEmptyOamData));
+    for (i = 0; i < numSpriteSets; i++)
+    {
+        spriteGroup = &spriteGroups[i];
+        if (spriteGroup->active)
+        {
+            u16 curSpriteSetCount = spriteSets[i]->count;
+            DmaCopy16(3, spriteSets[i]->oamData, &gOamBuffer[loadedCount], curSpriteSetCount * sizeof(struct OamData));
+            for (j = 0; j < curSpriteSetCount; j++)
+            {
+                oamData = (u16 *)(&gOamBuffer[loadedCount]);
+                oamSimple = &spriteGroup->oam[j];
+#ifdef JVPPBPORT
+                PortOamOwner(loadedCount, spriteGroup);
+#endif
+                oamSimple->oamId = loadedCount++;
+                oamSimple->xOffset = oamData[1] & 0x1FF;
+                oamSimple->yOffset = oamData[0] & 0xFF;
+            }
+        }
+    }
+
+#ifdef JVPPBPORT
+    PortOamLoaded(loadedCount);
+#endif
+    return loadedCount;
+}
+
+void ResetDisplayState(void)
+{
+    gMain.dispcntBackup |= DISPCNT_FORCED_BLANK;
+    REG_DISPCNT |= DISPCNT_FORCED_BLANK;
+    ClearGraphicsMemory();
+    ClearBgTilemapAndOffsets();
+    ClearSprites();
+    gMain.modeChangeFlags = MODE_CHANGE_NONE;
+    gMain.debugMenuCursorIndex = 0;
+    gMain.fieldFrameCount = 0;
+    gMain.pendingModeChangeType = MODE_CHANGE_NONE;
+    gMain.animationTimer = 0;
+    gMain.modeChangeDelayTimer = 0;
+    gMain.vCount = 144;
+    gMain.shopPanelActive = FALSE;
+    gMain.shopPanelSlideOffset = 0;
+    gMain.blendEnabled = FALSE;
+    gMain.blendControl = 0;
+    gMain.blendAlpha = 0;
+    gMain.blendBrightness = 0;
+    gMain.cutsceneBackdropBarActive = FALSE;
+}
+
+void ClearGraphicsMemory(void)
+{
+    DmaFill16(3, 0, VRAM, VRAM_SIZE);
+    DmaFill32(3, 0, OAM, OAM_SIZE);
+    DmaFill16(3, 0, PLTT, BG_PLTT_SIZE + OBJ_PLTT_SIZE);
+    REG_BG0HOFS = 0;
+    REG_BG0VOFS = 0;
+    REG_BG1HOFS = 0;
+    REG_BG1VOFS = 0;
+    REG_BG2HOFS = 0;
+    REG_BG2VOFS = 0;
+    REG_BG3HOFS = 0;
+    REG_BG3VOFS = 0;
+    REG_BLDCNT = 0;
+    REG_BLDY = 0;
+    REG_DISPSTAT = 0;
+    REG_BLDALPHA = 0;
+}
+
+void ClearBgTilemapAndOffsets(void)
+{
+    s16 i;
+
+    DmaFill16(3, 0, gBG0TilemapBuffer, 0xC00);
+    for (i = 0; i < 4; i++)
+    {
+        gMain.bgOffsets[i].xOffset = 0;
+        gMain.bgOffsets[i].yOffset = 0;
+    }
+}
+
+void ClearSprites(void)
+{
+    u16 i, j;
+
+    for (i = 0; i < NUM_SPRITE_GROUPS; i++)
+    {
+        gMain.spriteGroups[i].active = FALSE;
+        gMain.spriteGroups[i].baseX = 0;
+        gMain.spriteGroups[i].baseY = 0;
+        for (j = 0; j < MAX_SPRITES_IN_GROUP; j++)
+        {
+            gMain.spriteGroups[i].oam[j].oamId = 0;
+            gMain.spriteGroups[i].oam[j].xOffset = 0;
+            gMain.spriteGroups[i].oam[j].yOffset = 0;
+        }
+    }
+
+    for (i = 0; i < 128; i++)
+    {
+        gOamBuffer[i].y = 244;
+        gOamBuffer[i].affineMode = ST_OAM_AFFINE_OFF;
+        gOamBuffer[i].objMode = ST_OAM_OBJ_NORMAL;
+        gOamBuffer[i].mosaic = 0;
+        gOamBuffer[i].bpp = 0;
+        gOamBuffer[i].shape = 0;
+        gOamBuffer[i].x = 500;
+        gOamBuffer[i].matrixNum = 0;
+        gOamBuffer[i].hFlip = FALSE;
+        gOamBuffer[i].vFlip = FALSE;
+        gOamBuffer[i].size = 0;
+        gOamBuffer[i].tileNum = 0;
+        gOamBuffer[i].priority = 0;
+        gOamBuffer[i].paletteNum = PAL_IX_0;
+        gOamBuffer[i].affineParam = 0;
+    }
+}
+
+void DrawTextToTilemap(u8 const *arg0, s16 arg1, s16 arg2)
+{
+    // Rumble Pak related?
+    s16 var0 = strlen(arg0) - 1;
+    u16 *dest = &gBG0TilemapBuffer[arg1 * 32 + arg2];
+    do
+    {
+        *dest = (*arg0) - 32;
+        arg0++;
+        dest++;
+    } while (var0-- > 0);
+}
+
+u8 *FormatIntToString(int arg0, u8 *arg1, int arg2, s16 arg3)
+{
+    if (arg0 < 0)
+    {
+        *arg1 = 0x2D;
+        arg1++;
+        arg0 = -arg0;
+    }
+
+    while (1)
+    {
+        if (arg2 < 2)
+            break;
+
+        arg2--;
+        if (arg0 < IntPow(10, arg2))
+        {
+            *arg1 = 0x30;
+            arg1++;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    if (arg3)
+    {
+        WriteDigitsRecursive(arg0, arg1, 10);
+    }
+    else
+    {
+        u8 *ptr = WriteDigitsRecursive(arg0, arg1, 10);
+        *ptr = 0;
+    }
+
+    return arg1;
+}
+
+static u8 *WriteDigitsRecursive(u32 arg0, u8 *arg1, u32 arg2)
+{
+    u8 mod = arg0 % arg2;
+    int div = arg0 / arg2;
+    if (div != 0)
+        arg1 = WriteDigitsRecursive(div, arg1, arg2);
+
+    if (mod < 10)
+        *arg1 = mod + 48;
+    else
+        *arg1 = mod + 87;
+
+    return arg1 + 1;
+}
+
+static int IntPow(int arg0, int arg1)
+{
+    int var0;
+    int var1 = arg1;
+
+    if (arg1 < 0)
+        var1 = -var1;
+
+    var0 = 1;
+    while (var1)
+    {
+        if (var1 & 1)
+            var0 *= arg0;
+
+        arg0 *= arg0;
+        var1 >>= 1;
+    }
+
+    if (arg1 >= 0)
+        return var0;
+    else
+        return 1 / var0;
+}
+
+void SetMatrixScale(s16 xScale, s16 yScale, s16 matrixNum)
+{
+    vu16 pa, pb, pc, pd;
+#ifdef JVPPBPORT
+    // The GBA's division routine returns 0 for a divide by zero; x86 crashes.
+    u16 xScaleInv = xScale ? 0x10000 / xScale : 0;
+    u32 yScaleInv = yScale ? 0x10000 / yScale : 0;
+#else
+    u16 xScaleInv = 0x10000 / xScale;
+    u32 yScaleInv = 0x10000 / yScale;
+#endif
+
+    pa = xScaleInv;
+    pb = 0;
+    pc = 0;
+    yScaleInv = (u16)yScaleInv;
+    pd = yScaleInv;
+
+    gOamBuffer[matrixNum * 4 + 0].affineParam = pa;
+    gOamBuffer[matrixNum * 4 + 1].affineParam = pb;
+    gOamBuffer[matrixNum * 4 + 2].affineParam = pc;
+    gOamBuffer[matrixNum * 4 + 3].affineParam = yScaleInv;
+}
+
+
+u16 IsInVblank(void)
+{
+    if ((REG_IME & 1)                           // Interrupts enabled
+     && (REG_DISPSTAT & DISPSTAT_VBLANK_INTR)   // In VBLANK
+     && (REG_IE & INTR_FLAG_VBLANK)             // VBlank interrupt enabled
+     && !(REG_DISPCNT & DISPCNT_FORCED_BLANK))  // Ignore VBlank interrupts during forced blank
+        return TRUE;
+    else
+        return FALSE;
+}
+
+void SetMainCallback(void (*func)(void))
+{
+    gMainCallbackShadow = func;
+    if (!IsInVblank())
+        gMainCallback = func;
+}
+
+void ResetMainCallback(void)
+{
+    gMainCallback = DefaultMainCallback;
+    gMainCallbackShadow = DefaultMainCallback;
+}
+
+void SetVBlankIntrFunc(void (*func)(void))
+{
+    gVBlankIntrFuncShadow = func;
+    if (!IsInVblank())
+        *gVBlankIntrFuncPtr = func;
+}
+
+void ResetVBlankIntrFunc(void)
+{
+    *gVBlankIntrFuncPtr = VBlankIntr;
+    gVBlankIntrFuncShadow = VBlankIntr;
+}
+
+void SetVCountIntrFunc(void (*func)(void))
+{
+    gVCountIntrFuncShadow = func;
+    if (!IsInVblank())
+        *gVCountIntrFuncPtr = func;
+}
+
+void ResetVCountIntrFunc(void)
+{
+    *gVCountIntrFuncPtr = VCountIntr;
+    gVCountIntrFuncShadow = VCountIntr;
+}
+

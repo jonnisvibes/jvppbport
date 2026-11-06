@@ -1,0 +1,223 @@
+#ifndef GUARD_MAIN_H
+#define GUARD_MAIN_H
+
+#include "global.h"
+#include "constants/ereader.h"
+#include "constants/high_scores.h"
+#include "constants/pinball_inputs.h"
+#include "constants/species.h"
+#include "constants/palette_mappings.h"
+#include "constants/sprite_groups.h"
+#include "functions.h"
+
+struct HighScoreEntry
+{
+    union {
+        struct {
+            u32 name[HIGH_SCORE_NAME_LENGTH];
+            u32 scoreHi;
+            u32 scoreLo;
+        } parts;
+        u32 raw[HIGH_SCORE_NAME_LENGTH + 2];
+    } data;
+}; // size: 0x18
+
+// This is probably permanently saved data like pokedex and high scores.
+struct SaveData
+{
+    /*0x74*/ u8 pokedexFlags[NUM_SPECIES];
+    /*0x141*/ bool8 rumbleEnabled;
+    /*0x142*/ u8 ballSpeed;
+    /*0x143*/ u8 buttonConfigType;
+    /*0x144*/ u16 customButtonConfig[NUM_PINBALL_INPUTS][2];
+    /*0x158*/ struct HighScoreEntry highScores[2][NUM_HIGH_SCORES];
+    /*0x2D8*/ s8 signature[10];
+              u16 checksum;
+              u32 saveChangeCounter;
+};
+
+struct Main
+{
+    /*0x00*/ u8 filler0[0x2];
+    /*0x02*/ u8 mainState;
+    /*0x03*/ u8 subState;
+    /*0x04*/ u8 selectedField;
+    /*0x05*/ u8 tempField;
+    /*0x06*/ u8 isBonusField;
+    /*0x07*/ s8 eReaderBonuses[NUM_EREADER_CARDS];
+    /*0x0C*/ u8 sramError;
+    /*0x0D*/ u8 continueFromSave;
+    /*0x0E*/ u8 gameExitState;
+
+    // UnkF hold a Bitmask for the following:
+    // x1 mode start banner Evo/Catch/Travel, 
+    // x2 paused,
+    // x4 debug mode,
+    // x8 Reset Ball (ball saver)
+    // x10 End of ball (lose life reset Ball),
+    // x20 end of game,
+    // x40 End of bonus with expired timer,
+    // x80 Bonus Score banner
+    // Most cause a board state transition once conditions are met.
+    /*0x0F*/ u8 modeChangeFlags;   
+    /*0x10*/ u8 debugMenuCursorIndex;
+    /*0x11*/ u8 pendingModeChangeType;
+    /*0x12*/ u16 animationTimer;
+    /*0x14*/ u16 modeChangeDelayTimer;
+    /*0x16*/ u16 dispcntBackup;
+    /*0x18*/ u16 newKeys;
+    /*0x1A*/ u16 releasedKeys;
+    /*0x1C*/ u16 heldKeys;
+    /*0x1E*/ u8 filler1E[0x2];
+    /*0x20*/ u16 unk20;
+    /*0x22*/ u8 filler22[0x4];
+    /*0x26*/ s16 vCount;
+    /*0x28*/ s16 shopPanelActive;
+    /*0x2A*/ s16 shopPanelSlideOffset;
+    /*0x2C*/ s16 cutsceneBackdropBarActive;
+    /*0x2E*/ s16 kecleonOverlayHeight;
+    /*0x30*/ u16 idleDemoVariant;
+    /*0x32*/ u8 filler32[0x4];
+    /*0x36*/ u8 blendEnabled;
+    /*0x38*/ volatile u16 blendControl;
+    /*0x3A*/ volatile u16 blendAlpha;
+    /*0x3C*/ volatile u16 blendBrightness;
+             // may be a sub-struct. possibly for saved game?
+    /*0x40*/ int hasSavedGame;
+
+    /***
+     * Allows for 'board' level indirect sprite group references, so that multiple boards
+     * use a shared 'logical' reference for a sprite group, separate from the actual group
+     * being used for the specific board.
+     *
+     * EG: all fieldSpriteGroup[board][0] are a reference to the ball sprite group, but the
+     * actual sprite groups used for the ball (by field) are groups 70/74/11/22/18/26/38/13.
+     *
+     * Non boss bonuses use 2 entries (ball/respawn graphics)
+     * Boss bonus boards use those 2, plus an additional 5 for the 'capture' cutscene.
+     * Main boards have several, for shared features on the 2 main boards.
+     ***/
+    /*0x44*/ struct SpriteGroup *const *fieldSpriteGroups;
+    /*0x48*/ int rngValue;
+    /*0x4C*/ u32 systemFrameCount;
+    /*0x50*/ u32 fieldFrameCount;
+    /*0x54*/ u32 idleFrameCounter;
+    /*0x58*/ u32 finalScoreLo;
+    /*0x5C*/ u32 finalScoreHi;
+
+    /***
+     * First index = 'Action'
+     * 0:left flipper, 1:right flipper, 2:tilt left, 3:tilt right, 4=tilt up
+     * 
+     * Second index
+     * An action can be triggered by pressing 2 buttons simultaneously
+     *   Each data element holds a mask for the button it looks for.
+     ***/
+    /*0x60*/ u16 buttonConfigs[NUM_PINBALL_INPUTS][2]; 
+
+    // This field must be accessed using the following macro to produce matching code.
+#define gMain_saveData (*(struct SaveData *)(&gMain.saveData))
+    /*0x74*/  struct SaveData saveData;
+
+    /*0x2E8*/ struct BgOffsets bgOffsets[4];
+
+    /*0x2F8*/ struct SpriteGroup spriteGroups[NUM_SPRITE_GROUPS];
+    /*Note: spriteGroups is 100 groups of size B8. Extends to 4AD7.
+
+           0     1     2     3     4     5     6     7     8     9
+    00   2F8,  3B0,  468,  520,  5D8,  690,  748,  800,  8B8,  970,
+    10   A28,  AE0,  B98,  C50,  D08,  DC0,  E78,  F30,  FE8, 10A0,
+    20  1158, 1210, 12C8, 1380, 1438, 14F0, 15A8, 1660, 1718, 17D0,
+    30  1888, 1940, 19F8, 1AB0, 1B68, 1C20, 1CD8, 1D90, 1E48, 1F00,
+    40  1FB8, 2070, 2128, 21E0, 2298, 2350, 2408, 24C0, 2578, 2630,
+    50  26E8, 27A0, 2858, 2910, 29C8, 2A80, 2B38, 2BF0, 2CA8, 2D60,
+    60  2E18, 2ED0, 2F88, 3040, 30F8, 31B0, 3268, 3320, 33D8, 3490,
+    70  3548, 3600, 36B8, 3770, 3828, 38E0, 3998, 3A50, 3B08, 3BC0,
+    80  3C78, 3D30, 3DE8, 3EA0, 3F58, 4010, 40C8, 4180, 4238, 42F0,
+    90  43A8, 4460, 4518, 45D0, 4688, 4740, 47F8, 48B0, 4968, 4A20*/
+    
+};
+
+enum bonusStageLoop{
+    BONUS_STAGE_LOOP_START = 0,             // Going into Kecleon/Dusclops
+    BONUS_STAGE_LOOP_FIRST_SIMPLE_CLEARED,  // Going into Groudon/Kyogre
+    BONUS_STAGE_LOOP_FIRST_BOSS_CLEARED,    // Going into 2nd Kecleon/Dusclops
+    BONUS_STAGE_LOOP_SECOND_SIMPLE_CLEARED, // Going into 2nd Groudon/Kyogre
+    BONUS_STAGE_LOOP_SECOND_BOSS_CLEARED,   // Going into Rayquaza
+    BONUS_STAGE_LOOP_COUNT
+};
+
+#define StartOfEvenBonusLoop (gCurrentPinballGame->numCompletedBonusStages / BONUS_STAGE_LOOP_COUNT) % 2 == 0
+#define RayquazaCatchChanceTrip gCurrentPinballGame->numCompletedBonusStages % (2*BONUS_STAGE_LOOP_COUNT) == BONUS_STAGE_LOOP_COUNT + BONUS_STAGE_LOOP_SECOND_BOSS_CLEARED
+
+#define INTR_COUNT 14
+extern EWRAM_DATA IntrFunc gIntrTable[14];
+extern EWRAM_DATA struct Main gMain;
+extern EWRAM_DATA IntrFunc *gVBlankIntrFuncPtr;
+extern EWRAM_DATA void (*gMainCallback)(void);
+extern EWRAM_DATA void (*gVCountIntrFuncShadow)(void);
+extern EWRAM_DATA void (*gVBlankIntrFuncShadow)(void);
+extern EWRAM_DATA void (*gMainCallbackShadow)(void);
+extern EWRAM_DATA IntrFunc *gVCountIntrFuncPtr;
+
+
+extern u32 IntrMain[];
+
+// Rom_2 data
+extern StateFunc gMainFuncs[];
+
+// sym_bss
+
+extern IWRAM_DATA u16 gTempGfxBuffer[];
+extern IWRAM_DATA u8 gEReaderTextTileBuffer[3][0x800];
+extern IWRAM_DATA u16 gTextTilemapBuffer[];
+extern IWRAM_DATA struct OamData gOamBuffer[128];
+extern IWRAM_DATA u32 IntrMain_Buffer[0x200];
+extern IWRAM_DATA u16 gBG0TilemapBuffer[32 * 0x40];
+
+// ----
+
+void FadeInScreen(void);
+void FadeOutScreen(void);
+void ClearGraphicsMemory(void);
+void ClearBgTilemapAndOffsets(void);
+void ClearSprites(void);
+u32 Random(void);
+void VBlankIntr(void);
+void VCountIntr(void);
+void SerialIntr(void);
+void Timer3Intr(void);
+void EnableVBlankInterrupts(void);
+void DisableVBlankInterrupts(void);
+void MainLoopIter(void);
+void DefaultMainCallback(void);
+
+#define RESTART_GAME_BUTTONS (A_BUTTON | B_BUTTON | SELECT_BUTTON | START_BUTTON)
+
+enum PerFrameProcess{
+    PER_FRAME_PROCESS_DEFAULT_SPRITE_STATES = 0,
+    PER_FRAME_PROCESS_PAUSE_LOGIC = 1,
+    PER_FRAME_PROCESS_CAMERA_SHAKE_AND_DRAIN = 2,
+    PER_FRAME_PROCESS_BOARD_LOGIC = 3,
+    PER_FRAME_PROCESS_FLIPPER_LOGIC = 4,
+    PER_FRAME_PROCESS_BALL_MOVEMENT = 5,
+    PER_FRAME_PROCESS_COLLISION = 6,
+    PER_FRAME_PROCESS_DRAW_BALL = 7,
+    PER_FRAME_PROCESS_HUD_UPDATE = 8
+};
+
+#define PER_FRAME_PROCESS_PHASE_COUNT 9
+
+enum TiltShakeDirection{
+    TILT_SHAKE_DIRECTION_LEFT = 0,
+    TILT_SHAKE_DIRECTION_RIGHT = 1,
+    TILT_SHAKE_DIRECTION_UP = 2
+};
+
+enum BonusReturnLocation{
+    BONUS_RETURN_LOCATION_CENTER_KICKOUT = 0,
+    BONUS_RETURN_LOCATION_WHISCASH = 1,
+    BONUS_RETURN_LOCATION_PELIPPER = 2
+};
+
+#endif // GUARD_MAIN_H

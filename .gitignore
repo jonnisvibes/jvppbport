@@ -1,0 +1,15 @@
+# Build output
+build-JVPPBPort*/
+release/
+tools/preproc/preproc
+tools/preproc/preproc.exe
+__pycache__/
+*.o
+*.i
+
+# Never commit a ROM, a save, or anything taken from the game
+*.gba
+*.sav
+*.bin
+*.bmp
+*.debug
