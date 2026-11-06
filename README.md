@@ -23,8 +23,8 @@ Fan project, not affiliated with or endorsed by Nintendo, Creatures, GAME FREAK 
 ## Features
 
 * The whole table in one tall window with no Camera movement
-* Plays 1:1 to the original: the game code is the original's, and the ball
-physics and sound match the GBA frame for frame (checked against mGBA).
+* Plays 1:1 to the original: the game's code is functionally the same as the
+original's, and the ball physics and sound match the GBA frame for frame (checked against mGBA).
 * Keyboard, mouse and game controllers, all keys configurable in Options.
 * Rumble on controllers via the original Gameboy Player implementation (Options → RUMBLE).
 * Optional LCD / GBA screen filters and whole-number scaling (Options → SCREEN).
