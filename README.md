@@ -273,8 +273,8 @@ screenshot of the problem and attach `jvppbport.log` from the data folder
 
 ## Planned
 
-* More support for squarer screens (such as 16:9 monitors and tablets held
-  sideways) via an expanded dynamic camera view mode: more of the table than
+* More support for squarer screens (such as 4:3 monitors and Android
+  handhelds) via an expanded dynamic camera view mode: more of the table than
   the GBA showed, following the ball.
 
 ## How this was made
