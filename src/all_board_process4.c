@@ -199,6 +199,14 @@ void UpdateFrameProcess4_FlipperLogic_BonusBoards(void)
 
             if (spriteGroup->baseY > 180)
                 spriteGroup->baseY = 180;
+#ifdef JVPPBPORT
+            // BONUS STAGE FULL: during the openings that turn the flippers
+            // off (Kyogre, Groudon), the GBA's camera is too high to show
+            // them; FULL shows the whole stage, so hide them (Rayquaza's
+            // opening moves its camera in FULL, they come in by themselves).
+            if (PortBonusFull() && gCurrentPinballGame->flippersDisabled && gMain.selectedField != FIELD_RAYQUAZA)
+                spriteGroup->baseY = PortBonusBallHiddenY();
+#endif
 
             oamData = &spriteGroup->oam[0];
             gOamBuffer[oamData->oamId].x = oamData->xOffset + spriteGroup->baseX;

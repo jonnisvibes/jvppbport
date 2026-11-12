@@ -26,6 +26,7 @@
 static SDL_Window *sWindow;
 static SDL_Renderer *sRenderer;
 static SDL_Texture *sTexture;
+static int sTexW, sTexH;  // its size
 static uint32_t sFrame[PORT_MENU_MAX_H * PORT_MENU_MAX_W];  // the canvas (see PortCanvasWidth)
 static Uint64 sNextFrameTime;
 static jmp_buf sResetJump;
@@ -75,7 +76,9 @@ static int IsFullscreen(void)
 // - N: exactly N times (the window is made that size; in fullscreen or a
 //   bigger window the picture stays N times, centered on black; a window too
 //   small for it gets the biggest whole number that fits).
-// Not on touch screens (always FILL there).
+// On touch screens the same choices; there a whole-number scale changes how
+// many picture pixels the screen has (touch.c lays it out, so it fills the
+// screen at that scale).
 #define MAX_SCALE 16
 #define SCALE_UNREAD (-100)
 static int sScale = SCALE_UNREAD;
@@ -83,8 +86,6 @@ static int sPicW = PORT_CANVAS_WIDTH, sPicH = PORT_CANVAS_HEIGHT;  // the pictur
 
 int PortScaleMode(void)
 {
-    if (PortTouchEnabled())
-        return 0;
     if (sScale == SCALE_UNREAD)
     {
         const char *s = PortSettingGet("Display", "Scale");
@@ -96,6 +97,16 @@ int PortScaleMode(void)
     return sScale;
 }
 
+// The smallest whole-number scale offered.
+int PortScaleMin(void)
+{
+    int n = 1, max;
+
+    if (PortTouchEnabled())
+        PortTouchScaleRange(&n, &max);
+    return n;
+}
+
 // The biggest scale offered: the most that fits the window's screen
 // (in fullscreen).
 int PortScaleMax(void)
@@ -103,29 +114,32 @@ int PortScaleMax(void)
     SDL_Rect bounds;
     int display = sWindow ? SDL_GetWindowDisplayIndex(sWindow) : 0, n;
 
+    if (PortTouchEnabled())
+    {
+        int min;
+
+        PortTouchScaleRange(&min, &n);
+        return n;
+    }
     if (SDL_GetDisplayBounds(display < 0 ? 0 : display, &bounds) != 0)
         return 1;
     n = bounds.w / sPicW < bounds.h / sPicH ? bounds.w / sPicW : bounds.h / sPicH;
     return n < 1 ? 1 : n > MAX_SCALE ? MAX_SCALE : n;
 }
 
-// Makes a normal window the size of the chosen scale, keeping its middle
-// where it was (moved back onto its screen if it would stick out).
-static void SizeWindowForScale(void)
+// Makes a normal window w x h, keeping its middle where it was (moved back
+// onto its screen if it would stick out).
+static void ResizeWindowAroundMiddle(int w, int h)
 {
     SDL_Rect usable;
-    int n = PortScaleMode(), x, y, w, h, display;
+    int x, y, oldW, oldH, display;
 
-    if (!sWindow || n <= 0 || IsFullscreen() || PortTouchEnabled())
-        return;
     if (SDL_GetWindowFlags(sWindow) & SDL_WINDOW_MAXIMIZED)
         SDL_RestoreWindow(sWindow);
     SDL_GetWindowPosition(sWindow, &x, &y);
-    SDL_GetWindowSize(sWindow, &w, &h);
-    x += w / 2 - sPicW * n / 2;
-    y += h / 2 - sPicH * n / 2;
-    w = sPicW * n;
-    h = sPicH * n;
+    SDL_GetWindowSize(sWindow, &oldW, &oldH);
+    x += oldW / 2 - w / 2;
+    y += oldH / 2 - h / 2;
     display = SDL_GetWindowDisplayIndex(sWindow);
     if (SDL_GetDisplayUsableBounds(display < 0 ? 0 : display, &usable) == 0)
     {
@@ -142,9 +156,18 @@ static void SizeWindowForScale(void)
     SDL_SetWindowPosition(sWindow, x, y);
 }
 
+// Makes a normal window the size of the chosen scale.
+static void SizeWindowForScale(void)
+{
+    int n = PortScaleMode();
+
+    if (sWindow && n > 0 && !IsFullscreen() && !PortTouchEnabled())
+        ResizeWindowAroundMiddle(sPicW * n, sPicH * n);
+}
+
 void PortSetScaleMode(int n)
 {
-    if (PortTouchEnabled() || n < PORT_SCALE_SNAP || n > MAX_SCALE || n == PortScaleMode())
+    if (n < PORT_SCALE_SNAP || n > MAX_SCALE || n == PortScaleMode())
         return;
     sScale = n;
     if (n == PORT_SCALE_SNAP)
@@ -154,7 +177,88 @@ void PortSetScaleMode(int n)
     else
         PortSettingSetInt("Display", "Scale", n);
     PortSettingsSave();
-    SizeWindowForScale();
+    if (PortTouchEnabled())
+        PortTouchRelayout();
+    else
+        SizeWindowForScale();
+}
+
+// Options -> SCREEN -> TATE MODE ([Display] Tate in jvppbport.ini): the
+// picture turned a quarter, for a monitor stood on its side while Windows
+// stays in landscape. Everything after the game's canvas sees a sideways
+// picture (the window's shape, the scale, the LCD masks), so ON suits a
+// monitor turned clockwise (most stands; Windows calls that Portrait) and
+// REVERSE one turned the other way. Keys are unchanged; the mouse is mapped back
+// (PortTateToCanvas). PC only.
+static const char *const sTateNames[PORT_TATE_COUNT] = {"Off", "On", "Reverse"};
+static int sTate = -1;
+
+int PortTate(void)
+{
+    if (PortTouchEnabled() || !gPortStaticView)
+        return PORT_TATE_OFF;
+    if (sTate < 0)
+    {
+        const char *s = PortSettingGet("Display", "Tate");
+        int i;
+
+        sTate = PORT_TATE_OFF;
+        for (i = 0; s && i < PORT_TATE_COUNT; i++)
+            if (SDL_strcasecmp(s, sTateNames[i]) == 0)
+                sTate = i;
+    }
+    return sTate;
+}
+
+void PortSetTate(int mode)
+{
+    int was = PortTate();
+
+    if (PortTouchEnabled() || !gPortStaticView || mode < 0 || mode >= PORT_TATE_COUNT || mode == was)
+        return;
+    sTate = mode;
+    PortSettingSet("Display", "Tate", sTateNames[mode]);
+    PortSettingsSave();
+    if ((was != PORT_TATE_OFF) == (mode != PORT_TATE_OFF))
+        return;  // already sideways: the same window
+    {
+        int t = sPicW;
+
+        sPicW = sPicH;
+        sPicH = t;
+    }
+    if (!sWindow || IsFullscreen() || (SDL_GetWindowFlags(sWindow) & SDL_WINDOW_MAXIMIZED))
+        return;  // those stay as they are; the picture just fits them
+    if (PortScaleMode() > 0)
+        SizeWindowForScale();
+    else
+    {
+        // The window turned too, made smaller if that doesn't fit the screen.
+        SDL_Rect usable;
+        int w, h, display = SDL_GetWindowDisplayIndex(sWindow), t;
+
+        SDL_GetWindowSize(sWindow, &w, &h);
+        t = w, w = h, h = t;
+        if (SDL_GetDisplayUsableBounds(display < 0 ? 0 : display, &usable) == 0)
+        {
+            if (w > usable.w)
+                h = h * usable.w / w, w = usable.w;
+            if (h > usable.h)
+                w = w * usable.h / h, h = usable.h;
+        }
+        ResizeWindowAroundMiddle(w, h);
+    }
+}
+
+// A point of the sideways picture, as the canvas's pixels.
+void PortTateToCanvas(int *x, int *y)
+{
+    int px = *x, py = *y;
+
+    if (PortTate() == PORT_TATE_ON)
+        *x = sPicH - 1 - py, *y = px;
+    else if (PortTate() == PORT_TATE_REVERSE)
+        *x = py, *y = sPicW - 1 - px;
 }
 
 // Where the picture (w x h) goes in a window of outW x outH pixels: its
@@ -164,6 +268,16 @@ static void PictureRect(int outW, int outH, int w, int h, float *x, float *y, fl
     float fit = (float)outW / w < (float)outH / h ? (float)outW / w : (float)outH / h;
     int n = PortScaleMode();
 
+    if (PortTouchEnabled())
+    {
+        // touch.c made the picture the size for its scale: whole pixels if
+        // one was chosen. (Not in a PC window that only pretends to be a phone.)
+#ifdef __ANDROID__
+        n = n != 0 ? (int)fit : 0;
+#else
+        n = 0;
+#endif
+    }
     if (n == PORT_SCALE_SNAP)
         n = fit >= 1 ? (int)fit : 0;  // the biggest whole number that fits
     *scale = fit;
@@ -212,6 +326,18 @@ static int PlaceOnScreen(const SDL_Rect *r)
     return FALSE;
 }
 
+// The texture the picture is copied to, w x h.
+static void EnsureTexture(int w, int h)
+{
+    if (sTexture && sTexW == w && sTexH == h)
+        return;
+    if (sTexture)
+        SDL_DestroyTexture(sTexture);
+    sTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+    sTexW = w;
+    sTexH = h;
+}
+
 static void SaveWindowSettings(void)
 {
     Uint32 flags;
@@ -241,10 +367,8 @@ static void FitToWindow(void)
     SDL_GetWindowSize(sWindow, &w, &h);
     PortTouchSetWindow(w, h);
     PortTouchScreenSize(&w, &h);
-    if (sTexture)
-        SDL_DestroyTexture(sTexture);
     SDL_RenderSetLogicalSize(sRenderer, w, h);
-    sTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+    EnsureTexture(w, h);
 }
 #endif
 
@@ -303,16 +427,30 @@ static void InitWindow(void)
         sWindow = SDL_CreateWindow(PORT_NAME, x, y, windowWidth, windowHeight, hidden ? SDL_WINDOW_HIDDEN : 0);
         sRenderer = SDL_CreateRenderer(sWindow, -1, 0);
         SDL_RenderSetLogicalSize(sRenderer, width, height);
-        sTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                     width, height);
+        EnsureTexture(width, height);
         return;
     }
 #endif
-    // Default: as large as fits on the main screen (at most 3x), keeping the shape.
-    if (SDL_GetDisplayUsableBounds(0, &usable) == 0 && windowHeight > usable.h * 9 / 10)
+    if (PortTate())
     {
-        windowHeight = usable.h * 9 / 10;
-        windowWidth = windowHeight * width / height;
+        // Sideways from the start.
+        width = PortCanvasHeight(), height = PortCanvasWidth();
+        windowWidth = width * 3, windowHeight = height * 3;
+        sPicW = width, sPicH = height;
+    }
+    // Default: as large as fits on the main screen (at most 3x), keeping the shape.
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0)
+    {
+        if (windowHeight > usable.h * 9 / 10)
+        {
+            windowHeight = usable.h * 9 / 10;
+            windowWidth = windowHeight * width / height;
+        }
+        if (windowWidth > usable.w * 9 / 10)
+        {
+            windowWidth = usable.w * 9 / 10;
+            windowHeight = windowWidth * height / width;
+        }
     }
     saved.x = PortSettingGetInt("Window", "X", 0);
     saved.y = PortSettingGetInt("Window", "Y", 0);
@@ -349,8 +487,7 @@ static void InitWindow(void)
     if (PortSettingGetInt("Window", "Fullscreen", 0) && !hidden)
         SDL_SetWindowFullscreen(sWindow, SDL_WINDOW_FULLSCREEN_DESKTOP);
     SDL_RenderSetLogicalSize(sRenderer, width, height);
-    sTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                 width, height);
+    EnsureTexture(width, height);
 }
 
 // Keeps sNormalRect up to date as the window is moved or resized.
@@ -401,6 +538,7 @@ static void SaveScreenshot(void)
 // window's close button does.
 void PortQuit(void)
 {
+    PortConfirmAbort();
     SaveWindowSettings();
     PortExit(0);
 }
@@ -423,6 +561,34 @@ void PortSetFullscreen(int on)
 {
     if (sWindow && !PortTouchEnabled() && !on != !IsFullscreen())
         ToggleFullscreen();
+}
+
+// The window's size and place, kept while a change may still be undone.
+static SDL_Rect sRememberedRect;
+static int sRememberedMaximized;
+
+void PortWindowRemember(void)
+{
+    if (sWindow && !PortTouchEnabled())
+    {
+        sRememberedRect = sNormalRect;
+        sRememberedMaximized = (SDL_GetWindowFlags(sWindow) & SDL_WINDOW_MAXIMIZED) != 0;
+    }
+}
+
+void PortWindowRestore(void)
+{
+    if (!sWindow || PortTouchEnabled() || IsFullscreen())
+        return;
+    if (sRememberedMaximized)
+    {
+        SDL_MaximizeWindow(sWindow);
+        return;
+    }
+    if (SDL_GetWindowFlags(sWindow) & SDL_WINDOW_MAXIMIZED)
+        SDL_RestoreWindow(sWindow);
+    SDL_SetWindowSize(sWindow, sRememberedRect.w, sRememberedRect.h);
+    SDL_SetWindowPosition(sWindow, sRememberedRect.x, sRememberedRect.y);
 }
 
 #ifdef __ANDROID__
@@ -477,6 +643,7 @@ int PortPollEvent(SDL_Event *event)
     {
         if (event->type == SDL_QUIT)
         {
+            PortConfirmAbort();
             SaveWindowSettings();
             exit(0);
         }
@@ -493,6 +660,10 @@ int PortPollEvent(SDL_Event *event)
 #endif
         if (!PortTouchEvent(event))
             continue;
+        if (event->type == SDL_MOUSEMOTION)
+            PortTateToCanvas(&event->motion.x, &event->motion.y);
+        else if (event->type == SDL_MOUSEBUTTONDOWN || event->type == SDL_MOUSEBUTTONUP)
+            PortTateToCanvas(&event->button.x, &event->button.y);
         if (event->type == SDL_KEYDOWN && !event->key.repeat
             && (event->key.keysym.scancode == SDL_SCANCODE_F11
                 || ((event->key.keysym.mod & KMOD_ALT)
@@ -553,6 +724,22 @@ void PortPresent(const uint32_t *canvas, int width, int height)
                                        ? canvas[(y - dy) * width + x - dx] : 0xFF000000;
         canvas = moved;
     }
+    if (PortTate())
+    {
+        // The picture turned a quarter (see PortTate).
+        static uint32_t *turned;
+        int cx, cy, reverse = PortTate() == PORT_TATE_REVERSE;
+
+        if (!turned)
+            turned = malloc(PORT_MENU_MAX_W * PORT_MENU_MAX_H * sizeof(*turned));
+        for (cy = 0; cy < height; cy++)
+            for (cx = 0; cx < width; cx++)
+                turned[reverse ? cx * height + height - 1 - cy : (width - 1 - cx) * height + cy] = canvas[cy * width + cx];
+        canvas = turned;
+        cx = width, width = height, height = cx;
+        gw = width, gh = height;
+    }
+    EnsureTexture(width, height);
     SDL_UpdateTexture(sTexture, NULL, canvas, width * 4);
     sPicW = width;
     sPicH = height;
@@ -567,9 +754,9 @@ void PortPresent(const uint32_t *canvas, int width, int height)
         ApplyView(width, height, x, y, scale);
         SDL_RenderCopy(sRenderer, sTexture, NULL, NULL);
     }
-    else if (FrameListed(sShots, sFrameCount + 1))
+    if ((PortLcdFilter() != PORT_LCD_OFF || PortTate()) && FrameListed(sShots, sFrameCount + 1))
     {
-        // Test shots: the window as shown, filter included.
+        // Test shots: the window as shown, filter and turning included.
         char name[32], path[1100];
 
         snprintf(name, sizeof(name), "win_%u.bmp", sFrameCount + 1);
@@ -607,12 +794,23 @@ static void BugSnapshot(void)
     fprintf(stderr, "JVPPBPort: bug snapshot saved as %s (and .txt, .bin)\n", path);
 }
 
+// Test hooks ask for a snapshot here (e.g. JVPPBPORT_TEST_CATCHLOG when a
+// rare Pokémon shows up); taken at the next frame's start.
+static int sSnapshotRequested;
+void PortRequestSnapshot(void)
+{
+    sSnapshotRequested = 1;
+}
+
 static void HandleEvents(void)
 {
     SDL_Event event;
 
-    if (FrameListed(getenv("JVPPBPORT_SNAPSHOT"), sFrameCount))
+    if (FrameListed(getenv("JVPPBPORT_SNAPSHOT"), sFrameCount) || sSnapshotRequested)
+    {
+        sSnapshotRequested = 0;
         BugSnapshot();
+    }
     while (!sHeadless && PortPollEvent(&event))
     {
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_F12)
@@ -673,6 +871,8 @@ void PortVBlankIntrWait(void)
 
     PortRenderEnd();
     PortDrawTexts(sFrame);
+    PortConfirmFrame();
+    PortConfirmDraw(sFrame);
     PortPresent(sFrame, PortCanvasWidth(), PortCanvasHeight());
 
     sFrameCount++;

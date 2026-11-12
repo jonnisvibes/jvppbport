@@ -883,15 +883,54 @@ static void PanelPut(int x, int y, u32 color)
         sCanvas[cy * PortCanvasWidth() + cx] = FadeArgb(color, &sPanelRegs);
 }
 
-// A small black arrow like the sound test's, pointing left (dir -1) or right.
+// The Options screen's backgrounds at line sy, column sx (for confirm.c's windows).
+uint32_t PortOptionsLinePixel(int sx, int sy)
+{
+    return sBgLines[sy][sx] | 0xFF000000;
+}
+
+// A small arrow like the sound test's, pointing left (dir -1) or right:
+// white with a 1-pixel black outline, the Options font's colors and style
+// (PortDrawBoldText outlines its strokes the same way, all 8 neighbors).
+static int PanelArrowCell(int c, int r, int dir)
+{
+    if (PortTouchEnabled())
+    {
+        // For fingers: a triangle 7 wide and 13 tall, 9x15 with its outline.
+        return r >= -6 && r <= 6 && c >= 0 && c < 7 - abs(r);
+    }
+    if (dir > 0)
+        c = 2 - c;
+    return r >= 0 && r < 5 && c >= 0 && c < 3 && c >= (r < 3 ? 2 - r : r - 2);
+}
+
 static void PanelArrow(int x, int y, int dir)
 {
-    int r, c;
+    int r, c, dr, dc;
+    int touch = PortTouchEnabled();
+    int r0 = touch ? -7 : -1, r1 = touch ? 7 : 5, c0 = -1, c1 = touch ? 7 : 3;
 
-    for (r = 0; r < 5; r++)
-        for (c = 0; c < 3; c++)
-            if (c >= (r < 3 ? 2 - r : r - 2))
-                PanelPut(dir < 0 ? x + c : x + 2 - c, y + r, 0xFF000000);
+    for (r = r0; r <= r1; r++)
+        for (c = c0; c <= c1; c++)
+        {
+            // Screen spot: touch triangles grow away from x + 1 (left) or
+            // x + 1 (right), filling x - 6 .. x + 2 or x .. x + 8 with the outline.
+            int px = touch ? (dir < 0 ? x + 1 - c : x + 1 + c) : x + c;
+            int py = touch ? y + 2 + r : y + r;
+            int near = FALSE;
+
+            if (PanelArrowCell(c, r, dir))
+            {
+                PanelPut(px, py, 0xFFFFFFFF);
+                continue;
+            }
+            for (dr = -1; dr <= 1 && !near; dr++)
+                for (dc = -1; dc <= 1; dc++)
+                    if (PanelArrowCell(c + dc, r + dr, dir))
+                        near = TRUE;
+            if (near)
+                PanelPut(px, py, 0xFF000000);
+        }
 }
 
 // The source pixel (on the GBA screen) for panel pixel (x, y): box lines
@@ -916,7 +955,7 @@ static void PanelSource(int x, int y, int *sx, int *sy, int *dim)
         PortOptionsBox(b, &name, &first, &rows, &top);
         rows += PortOptionsBoxNote(b) != NULL;  // the note takes a row's lines
         k = y - top;
-        if (k < 0 || k >= 20 + 12 * rows)
+        if (k < 0 || k >= 20 + PortOptionsRowH() * rows)
             continue;
         if (k < 12)
         {
@@ -959,10 +998,10 @@ static void PanelSource(int x, int y, int *sx, int *sy, int *dim)
             else if (x >= textEnd + 51 && x < 200)
                 *sx = 120;
         }
-        else if (k < 16 + 12 * rows)
+        else if (k < 16 + PortOptionsRowH() * rows)
             *sy = 76 + (y & 1);              // the box's middle
         else
-            *sy = 148 + k - (16 + 12 * rows);  // its bottom
+            *sy = 148 + k - (16 + PortOptionsRowH() * rows);  // its bottom
     }
 }
 
@@ -1029,19 +1068,20 @@ static int DrawOptionsPanel(void)
         for (t = 0; t < tabs; t++)
             PortDrawBoldText(textX[t], top + 4, names[t], t == shown ? 0xFFFFFFFF : 0xFFB0B0B0, 0xFF000000, PanelPut);
         if ((name = PortOptionsBoxNote(b)) != NULL)
-            PortDrawBoldText(PANEL_LABEL_X, PortOptionsRowY(first + count - 1) + 12, name, 0xFFB0B0B0, 0xFF000000, PanelPut);
+            PortDrawBoldText(PANEL_LABEL_X, PortOptionsRowY(first + count - 2) + PortOptionsRowH(), name, 0xFFB0B0B0, 0xFF000000, PanelPut);
     }
     for (r = 0; r < rows; r++)
     {
         const char *value = PortOptionsRowValue(r);
         int ry = PortOptionsRowY(r);
 
-        PortDrawBoldText(PANEL_LABEL_X, ry, PortOptionsRowLabel(r), 0xFFFFFFFF, 0xFF000000, PanelPut);
+        PortDrawBoldText(PANEL_LABEL_X, ry, PortOptionsRowLabel(r), PortOptionsRowDim(r) ? 0xFFA0A0A0 : 0xFFFFFFFF, 0xFF000000, PanelPut);
         if (PortOptionsRowHasArrows(r))
         {
             PanelArrow(PANEL_VALUE_X - 26, ry, -1);
             PanelArrow(PANEL_VALUE_X + 24, ry, 1);
-            PortDrawBoldText(PANEL_VALUE_X - PortBoldTextWidth(value) / 2, ry, value, 0xFFFFFFFF, 0xFF000000, PanelPut);
+            PortDrawBoldText(PANEL_VALUE_X - PortBoldTextWidth(value) / 2, ry, value,
+                             PortOptionsRowEdited(r) ? 0xFFFFD84A : 0xFFFFFFFF, 0xFF000000, PanelPut);
         }
         else
         {
@@ -1082,6 +1122,48 @@ static int DrawOptionsPanel(void)
 // to the canvas's edges, so it fills the screen (Options' orange border goes
 // on to the edges, a white screen stays white), fades included. Not the
 // intro (black bars).
+// Options on a touch screen: its roomy rows can make it taller than the
+// screen. It starts under the BACK button and scrolls: a finger drags it
+// (PortOptionsScrollBy) and it follows the cursor when keys or a pad move it.
+#define OPTIONS_TOP_CLEAR 40
+#define OPTIONS_BOTTOM_CLEAR 8
+static int sOptionsScroll, sOptionsMaxScroll, sOptionsLastRow = -2;
+
+int PortOptionsScrollBy(int dy)
+{
+    if (sOptionsMaxScroll <= 0)
+        return FALSE;
+    sOptionsScroll -= dy;
+    return TRUE;
+}
+
+static void OptionsScrollFollow(int height)
+{
+    int row = -1;
+
+    if (PortOptionsHandSprite(&row) < 0)
+        row = -1;
+    if (row != sOptionsLastRow)
+    {
+        sOptionsLastRow = row;
+        if (row < 0)
+            sOptionsScroll = 0;
+        else
+        {
+            int y = OPTIONS_TOP_CLEAR - sOptionsScroll + PortOptionsRowY(row) - 3;
+
+            if (y < OPTIONS_TOP_CLEAR)
+                sOptionsScroll -= OPTIONS_TOP_CLEAR - y;
+            else if (y + 24 > height)
+                sOptionsScroll += y + 24 - height;
+        }
+    }
+    if (sOptionsScroll > sOptionsMaxScroll)
+        sOptionsScroll = sOptionsMaxScroll;
+    if (sOptionsScroll < 0)
+        sOptionsScroll = 0;
+}
+
 void PortRenderEnd(void)
 {
     int width = PortCanvasWidth(), height = PortCanvasHeight(), x, y;
@@ -1089,14 +1171,14 @@ void PortRenderEnd(void)
 
     if (sTableMode && sPauseSplit)
         DrawPausePanel();
-    if (gPortStaticView && !sTableMode && !sLayout && x0 >= 0 && y0 >= 0 && PanelRows())
+    if (gPortStaticView && !sTableMode && !sLayout && x0 >= 0 && (y0 >= 0 || PanelRows()) && PanelRows())
         y1 = DrawOptionsPanel();
     if (!gPortStaticView || sTableMode || sLayout
-        || (width == PORT_CANVAS_WIDTH && height == PORT_CANVAS_HEIGHT) || x0 < 0 || y0 < 0)
+        || (width == PORT_CANVAS_WIDTH && height == PORT_CANVAS_HEIGHT) || x0 < 0 || (y0 < 0 && !PanelRows()))
         return;
     if (gMain.mainState == STATE_INTRO)
         return;  // the intro's moving scenes would smear; black bars there
-    for (y = y0; y < y1; y++)
+    for (y = y0 < 0 ? 0 : y0; y < y1; y++)  // (Options, scrolled: y0 is above the canvas)
     {
         uint32_t *row = &sCanvas[y * width];
         for (x = 0; x < x0; x++)
@@ -1159,6 +1241,18 @@ void PortRenderBegin(uint32_t *canvas)
         sWindowY = (height - (PanelRows() ? PortOptionsPanelTop() + PortOptionsPanelHeight() : PORT_SCREEN_HEIGHT)) / 2;
         if (sWindowY < 0)
             sWindowY = 0;
+        if (gMain.mainState != STATE_OPTIONS)
+            sOptionsScroll = 0, sOptionsLastRow = -2;
+        sOptionsMaxScroll = 0;
+        if (PanelRows() && PortTouchEnabled())
+        {
+            sOptionsMaxScroll = OPTIONS_TOP_CLEAR + PortOptionsPanelTop() + PortOptionsPanelHeight() + OPTIONS_BOTTOM_CLEAR - height;
+            if (sOptionsMaxScroll > 0)
+            {
+                OptionsScrollFollow(height);
+                sWindowY = OPTIONS_TOP_CLEAR - sOptionsScroll;
+            }
+        }
         for (i = 0; i < width * height; i++)
             canvas[i] = 0xFF000000;
         return;

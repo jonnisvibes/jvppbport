@@ -1,0 +1,7 @@
+<resources>
+    <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+    <!-- Background of the launcher icon (the setup screen's blue). -->
+    <color name="icon_background">#14213D</color>
+</resources>

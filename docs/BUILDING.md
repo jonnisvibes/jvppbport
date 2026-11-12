@@ -43,6 +43,29 @@ x86_64-w64-mingw32-addr2line -f -p -e build-JVPPBPort-win/JVPPBPort.debug ADDRES
 `make release` builds the Windows program and packs the release zips in
 `release/`, with their SHA-256 sums.
 
+## Android (built on Linux)
+
+No Gradle or Android Studio needed: the Makefile drives the Android SDK's
+command-line tools directly. You need Java 17 and the Android SDK in
+`~/Android/sdk` (or set `ANDROID_HOME`) with these packages, installed with
+the SDK's `sdkmanager`:
+
+```sh
+sudo apt install openjdk-17-jdk-headless curl
+sdkmanager "platform-tools" "platforms;android-35" "build-tools;36.0.0" "ndk;28.2.13676358"
+make android -j$(nproc)
+```
+
+This downloads SDL2's source into `build-JVPPBPort-android/sdl/` (checked by
+its SHA-256), builds it and the game for 64-bit ARM (Android 8.0 and newer),
+and makes `build-JVPPBPort-android/JVPPBPort.apk`.
+
+The first build makes a signing key, `~/Android/jcppbport.keystore`, with a
+random password in `~/Android/jcppbport.keystore.pass`. Keep both: Android
+only installs an update over an app signed with the same key. Your builds
+can't update the official release's app (or the other way round) because the
+keys differ; uninstall first, and copy your save out before you do.
+
 ## Clean
 
 ```sh

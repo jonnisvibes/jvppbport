@@ -463,6 +463,15 @@ static s16 FinishSample(float v, float *dcIn, float *dcOut)
 
 // Produces one frame of sound. Called once per frame, before the VBlank
 // interrupt (which may restart the sound DMA).
+// Hidden frames (platform.c) make sound that nobody should hear: it is
+// mixed as usual (the mixer's state carries on) but not played.
+static int sDiscard;
+
+void PortAudioDiscard(int on)
+{
+    sDiscard = on;
+}
+
 void PortAudioFrame(void)
 {
     static s16 out[OUTPUT_RATE / 50 * 2];
@@ -547,6 +556,8 @@ void PortAudioFrame(void)
     }
     sDmaCycles += CYCLES_PER_FRAME;
 
+    if (sDiscard)
+        return;
     if (sQueueAudio)
     {
         Uint32 queued = SDL_GetQueuedAudioSize(sDevice);

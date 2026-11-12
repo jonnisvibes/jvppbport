@@ -170,13 +170,22 @@ static void OptionsScreen(struct Screen *s)
         {
             int x, y;
 
-            PortScreenToCanvas(16, PortOptionsRowY(i) - 3, &x, &y);
+            PortScreenToCanvas(16, PortOptionsRowY(i) - 3 - (PortOptionsRowH() - 12) / 2, &x, &y);
             if (cursor == OPTIONS_SCREEN + i && PortOptionsRowHasArrows(i))
             {
-                Add(s, x + 78, y, 14, 12, -1, DPAD_LEFT, TRUE);
-                Add(s, x + 128, y, 14, 12, -1, DPAD_RIGHT, TRUE);
+                // (Fingers get bigger targets: the row's whole value area.)
+                if (PortTouchEnabled())
+                {
+                    Add(s, x + 60, y, 40, PortOptionsRowH(), -1, DPAD_LEFT, TRUE);
+                    Add(s, x + 116, y, 44, PortOptionsRowH(), -1, DPAD_RIGHT, TRUE);
+                }
+                else
+                {
+                    Add(s, x + 78, y, 14, PortOptionsRowH(), -1, DPAD_LEFT, TRUE);
+                    Add(s, x + 128, y, 14, PortOptionsRowH(), -1, DPAD_RIGHT, TRUE);
+                }
             }
-            Add(s, x, y, 216, 12, OPTIONS_SCREEN + i, 0, TRUE);
+            Add(s, x, y, 216, PortOptionsRowH(), OPTIONS_SCREEN + i, 0, TRUE);
         }
         // The PINBALL and MENU boxes' name tabs (KEYS, PAD).
         for (i = 0; i < PortOptionsBoxCount(); i++)
@@ -259,6 +268,18 @@ static void FieldSelect(struct Screen *s)
     }
 }
 
+// For touch.c's big arrows: Ball Speed is being chosen, and where its box is.
+int PortFieldSpeedRect(int *x, int *y, int *w, int *h)
+{
+    int speed;
+
+    if (!gPortStaticView || gMain.mainState != STATE_FIELD_SELECT || gMain.subState != FIELD_SELECT_INPUT
+        || PortFieldSelectState(&speed) != FIELD_SELECT_BALL_SPEED)
+        return FALSE;
+    PortFieldSelectRect(2, x, y, w, h);
+    return TRUE;
+}
+
 static void PokedexList(struct Screen *s)
 {
     int rows = gPortStaticView ? PortDexListRows() : 5, i, x, y, w, h;
@@ -294,8 +315,16 @@ static void PinballGame(struct Screen *s)
         s->prev = DPAD_UP;
         s->next = DPAD_DOWN;
         s->clickConfirms = FALSE;
-        Add(s, 88, 70, 80, 12, 0, 0, FALSE);
-        Add(s, 88, 82, 80, 12, 1, 0, FALSE);
+        if (PortTouchEnabled())
+        {
+            Add(s, 56, 58, 128, 24, 0, 0, FALSE);
+            Add(s, 56, 82, 128, 24, 1, 0, FALSE);
+        }
+        else
+        {
+            Add(s, 88, 70, 80, 12, 0, 0, FALSE);
+            Add(s, 88, 82, 80, 12, 1, 0, FALSE);
+        }
     }
     else if (gMain.shopPanelActive)
     {
@@ -318,11 +347,11 @@ static void PinballGame(struct Screen *s)
         Add(s, 142, 88, 90, 30, -1, A_BUTTON, FALSE);
         if (!PortShopIsEvolution())
         {
-            // The Mart: the rest of its panel does nothing. Without the
-            // touch screen's BACK button (PC, TOUCH OFF) a click anywhere
-            // else leaves it (B; otherwise there is no way out on a phone).
+            // The Mart: the rest of its panel does nothing. With a mouse
+            // a click anywhere else leaves it (B); touch screens have a
+            // BACK button under the panel for that (touch.c).
             Add(s, 0, 14, PORT_SCREEN_WIDTH, 122, -1, 0, FALSE);
-            if (!PortTouchControls())
+            if (!PortTouchEnabled())
                 Add(s, -4096, -4096, 8192, 8192, -1, B_BUTTON, TRUE);
         }
     }
@@ -336,8 +365,17 @@ static void PinballGame(struct Screen *s)
 
         if (!canvas)
             x -= gCurrentPinballGame->cameraXOffset, y -= gCurrentPinballGame->cameraYOffset;
-        Add(s, x, y, 48, 17, -1, A_BUTTON, canvas);
-        Add(s, x, y + 17, 48, 17, -1, B_BUTTON, canvas);
+        if (PortTouchEnabled())
+        {
+            // Fingers: the rows reach past the little picture.
+            Add(s, x - 40, y - 20, 128, 37, -1, A_BUTTON, canvas);
+            Add(s, x - 40, y + 17, 128, 37, -1, B_BUTTON, canvas);
+        }
+        else
+        {
+            Add(s, x, y, 48, 17, -1, A_BUTTON, canvas);
+            Add(s, x, y + 17, 48, 17, -1, B_BUTTON, canvas);
+        }
     }
 }
 
@@ -358,6 +396,22 @@ int PortGameChoiceOpen(void)
         || (game->boardState == MAIN_BOARD_STATE_TRAVEL_MODE && game->boardSubState == TRAVEL_SUBSTATE_CONFIRMATION_AND_TRAVEL_CUTSCENE);
 }
 
+// For touch.c's big buttons: PORT_SHOP_* for what the panel offers now, 0
+// while it isn't taking input (sliding in, a prize picked).
+int PortShopArrows(void)
+{
+    struct PinballGame *game = gCurrentPinballGame;
+
+    if (gMain.mainState != STATE_GAME_MAIN || !gMain.shopPanelActive || gMain.shopPanelSlideOffset <= 19
+        || game->shopEntryTimer > 144 || game->catchModeEventTimer != 0 || (gMain.modeChangeFlags & MODE_CHANGE_PAUSE))
+        return 0;
+    if (!PortShopIsEvolution())
+        return game->prizeSelected ? 0 : PORT_SHOP_SIDE | PORT_SHOP_BACK;
+    return (game->evolvablePartySize > 1 ? PORT_SHOP_SIDE : 0)
+         | (game->evoChainPosition < game->evoChainMaxStage ? PORT_SHOP_UP : 0)
+         | (game->evoChainPosition > 0 ? PORT_SHOP_DOWN : 0);
+}
+
 static void DescribeScreen(struct Screen *s)
 {
     int i;
@@ -365,6 +419,24 @@ static void DescribeScreen(struct Screen *s)
     memset(s, 0, sizeof(*s));
     s->current = -1;
     s->clickConfirms = TRUE;
+    if (PortConfirmOpen())
+    {
+        // KEEP / UNDO, as menu items so hovering picks one and a click presses it.
+        int x, y, w, h;
+
+        s->current = PortConfirmSelected();
+        s->prev = DPAD_LEFT;
+        s->next = DPAD_RIGHT;
+        s->clickConfirms = FALSE;
+        for (i = 0; i < 2; i++)
+        {
+            PortConfirmButton(i, &x, &y, &w, &h);
+            Add(s, x, y, w, h, i, 0, TRUE);
+        }
+        s->first = 0;
+        s->last = 1;
+        return;
+    }
     switch (gMain.mainState)
     {
     case STATE_TITLE:

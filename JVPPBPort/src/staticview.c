@@ -91,6 +91,16 @@ int PortTableView(void)
 // game uses with it come out as (table position + 2048): objects use
 // `pos - cameraXOffset`; the ball uses `pos - cameraBaseY - cameraScrollOffset
 // - cameraYAdjust` (and `- screenShakeX` for x).
+//
+// A full-size bonus stage (BONUS STAGE FULL) has a still camera: the formulas
+// must come out as `pos - camera`, without the shake and the cameraYAdjust
+// the stages use for their camera moves.
+static int BonusFullShown(void)
+{
+    return PortBonusFull() && (gMain.mainState == STATE_GAME_MAIN || gMain.mainState == STATE_GAME_IDLE)
+        && gMain.selectedField >= FIELD_BONUS_START;
+}
+
 int PortDrawCam_cameraXOffset(int value)
 {
     return PortTableView() ? -WORLD_BIAS : value;
@@ -98,16 +108,25 @@ int PortDrawCam_cameraXOffset(int value)
 
 int PortDrawCam_cameraYOffset(int value)
 {
+    // FULL's held camera, also before the stage's first camera update (the
+    // fade in, when the game's start camera is still set: Spheal's Spheals).
+    if (BonusFullShown())
+        return gBoardConfig.fieldLayout.cameraScrollMinY - 80 + PortBonusIntroAdjust(gCurrentPinballGame->cameraYAdjust);
     return PortTableView() ? -WORLD_BIAS : value;
 }
 
 int PortDrawCam_cameraBaseX(int value)
 {
+    if (BonusFullShown())
+        return value - gCurrentPinballGame->screenShakeX;
     return PortTableView() ? -WORLD_BIAS - gCurrentPinballGame->screenShakeX : value;
 }
 
 int PortDrawCam_cameraBaseY(int value)
 {
+    if (BonusFullShown())
+        return value - gCurrentPinballGame->cameraScrollOffset - gCurrentPinballGame->cameraYAdjust
+            + PortBonusIntroAdjust(gCurrentPinballGame->cameraYAdjust);
     if (!PortTableView())
         return value;
     return -WORLD_BIAS - gCurrentPinballGame->cameraScrollOffset - gCurrentPinballGame->cameraYAdjust;
@@ -120,7 +139,7 @@ int PortDrawCam_cameraBaseY(int value)
 void PortTableWobble(int *dx, int *dy)
 {
     *dx = *dy = 0;
-    if (!PortTableView())
+    if (!PortTableView() && !BonusFullShown())
         return;
     *dx = -(gCurrentPinballGame->tiltXOffset + gCurrentPinballGame->screenShakeX);
     *dy = -(gCurrentPinballGame->tiltYOffset + gCurrentPinballGame->screenShakeY);

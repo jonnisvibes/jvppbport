@@ -8,6 +8,7 @@
 #include "global.h"
 #include "main.h"
 #include "constants/fields.h"
+#include "constants/board/bonus_board.h"
 #include "titlescreen.h"
 #include "jvppbport.h"
 
@@ -1029,10 +1030,23 @@ static const struct PortLayout *DexLayout(void)
 }
 
 // Bonus stages: the main table the ball came from stays behind, dimmed, and
-// the stage (the whole GBA screen) is drawn over it, low enough that its
-// flippers are near the main table's flippers.
+// the stage is drawn over it, low enough that its flippers are near the main
+// table's flippers. Options -> SCREEN -> BONUS STAGE ([Display] BonusStage):
+// - FULL (the default): the whole stage, with the camera held still at the
+//   top of its range (src/all_board_process2.c): 188 lines, or 204 on
+//   Spheal, whose camera range is 16 lines taller (its net is at the top,
+//   its flippers at the bottom). The stage's bottom edge is in the same
+//   place for all six. The GBA draws its score row over the screen's last
+//   16 lines; here it lies under the stage, on the table, so it doesn't
+//   cover the flippers.
+// - ORIGINAL: the GBA's 160-line window, following the ball.
 #define BONUS_X 8
-#define BONUS_Y 254
+#define BONUS_Y 254            // ORIGINAL
+#define BONUS_FULL_BOTTOM 414  // canvas line under the stage's last line
+#define BONUS_FULL_H 188
+#define BONUS_FULL_H_SPHEAL 204
+#define BONUS_HUD_LINE 144     // the GBA screen line where the score row starts
+#define BONUS_HUD_H 16
 #define BONUS_DIM 77  // table brightness, out of 256
 #define BONUS_FRAME 0xFFE6E6E6
 
@@ -1046,6 +1060,106 @@ static const struct PortLayout sBonusLayout = {
     .fillBg = -1, .image = sBonusImage,
     .pieceCount = ARRAY_COUNT(sBonusPieces), .pieces = sBonusPieces,
 };
+
+#define NO_BG0 (PORT_LAYER_ALL & ~PORT_LAYER_BG(0))
+#define BONUS_FULL_LOW_PIECE 2
+static struct PortLayoutPiece sBonusFullPieces[] = {
+    // The stage; dy and the last piece's height are set per stage in
+    // MakeBonusImage (SetBonusFullPieces).
+    {0, 0, PORT_SCREEN_WIDTH, BONUS_HUD_LINE, BONUS_X, 0, PORT_LAYER_ALL, FALSE},
+    {0, BONUS_HUD_LINE, PORT_SCREEN_WIDTH, BONUS_HUD_H, BONUS_X, 0, NO_BG0, FALSE},
+    {0, PORT_SCREEN_HEIGHT, PORT_SCREEN_WIDTH, 0, BONUS_X, 0, NO_BG0, FALSE},
+    // The score row, see-through where it has nothing to draw (fillUnder
+    // with no fill keeps what's under it).
+    {0, BONUS_HUD_LINE, PORT_SCREEN_WIDTH, BONUS_HUD_H, BONUS_X, BONUS_FULL_BOTTOM + 3, PORT_LAYER_BG(0), TRUE},
+};
+
+static const struct PortLayout sBonusFullLayout = {
+    .fillBg = -1, .image = sBonusImage,
+    .pieceCount = ARRAY_COUNT(sBonusFullPieces), .pieces = sBonusFullPieces,
+};
+
+static int sBonusFull = -1;
+
+int PortBonusFull(void)
+{
+    if (!gPortStaticView)
+        return FALSE;
+    if (sBonusFull < 0)
+    {
+        const char *s = PortSettingGet("Display", "BonusStage");
+
+        sBonusFull = !(s && (s[0] == 'O' || s[0] == 'o'));
+    }
+    return sBonusFull;
+}
+
+// How many lines of the stage FULL shows (see above).
+static int BonusFullLines(void)
+{
+    return gMain.selectedField == FIELD_SPHEAL ? BONUS_FULL_H_SPHEAL : BONUS_FULL_H;
+}
+
+static void SetBonusFullPieces(void)
+{
+    int lines = BonusFullLines(), top = BONUS_FULL_BOTTOM - lines;
+
+    sBonusFullPieces[0].dy = top;
+    sBonusFullPieces[1].dy = top + BONUS_HUD_LINE;
+    sBonusFullPieces[BONUS_FULL_LOW_PIECE].dy = top + PORT_SCREEN_HEIGHT;
+    sBonusFullPieces[BONUS_FULL_LOW_PIECE].h = lines - PORT_SCREEN_HEIGHT;
+    // Kecleon's BG1 stays put on the GBA (the camera only moves the rest),
+    // and below the screen's 160 lines its map holds other art.
+    sBonusFullPieces[BONUS_FULL_LOW_PIECE].layers = NO_BG0 & ~(gMain.selectedField == FIELD_KECLEON ? PORT_LAYER_BG(1) : 0);
+}
+
+// The bonus stage ball's sprite (src/all_board_process7.c): the game keeps
+// it at screen line 180 or above, and parks a hidden ball at line 200,
+// both under the GBA's score row or off its screen. FULL shows lines down
+// to 188 (204 on Spheal), so there the ball goes on down out of sight
+// (it reaches the drain at line 194, 210 on Spheal) and is parked lower.
+#define BONUS_FULL_BALL_PARK 224
+int PortBonusBallMaxY(void)
+{
+    return PortBonusFull() ? BONUS_FULL_BALL_PARK : 180;
+}
+
+int PortBonusBallHiddenY(void)
+{
+    return PortBonusFull() ? BONUS_FULL_BALL_PARK : 200;
+}
+
+// Rayquaza's opening (about 11 s): the GBA shows the sky above the stage
+// (cameraYAdjust -88), wraps the backgrounds round once (bgScrollSpeed), then
+// lowers its camera into the stage (cameraYAdjust up to 0). FULL keeps that
+// camera move for these frames (all_board_process2.c, staticview.c), so
+// the opening plays as on the GBA inside FULL's frame. The GBA's camera sits
+// at the bottom of its range then, the lines FULL adds lower down; seen from
+// FULL's held camera, the top lines would show the stage's bottom (the
+// map wraps round). So the view starts at the GBA's camera and comes up to
+// the held one as cameraYAdjust goes to 0.
+int PortBonusIntroView(int adjust)
+{
+    return adjust - adjust * (BonusFullLines() - PORT_SCREEN_HEIGHT) / 88;
+}
+
+// The camera move FULL keeps (0 outside the opening).
+int PortBonusIntroAdjust(int adjust)
+{
+    int intro = PortBonusFull() && gMain.selectedField == FIELD_RAYQUAZA
+        && (gMain.mainState == STATE_GAME_MAIN || gMain.mainState == STATE_GAME_IDLE)
+        && gCurrentPinballGame && gCurrentPinballGame->boardState == LEGENDARY_BOARD_STATE_INTRO
+        && gCurrentPinballGame->introSequencePhase == 0;
+
+    return intro ? PortBonusIntroView(adjust) : 0;
+}
+
+void PortSetBonusFull(int on)
+{
+    sBonusFull = on != 0;
+    PortSettingSet("Display", "BonusStage", on ? "Full" : "Original");
+    PortSettingsSave();
+}
 
 // The table behind a bonus stage: the last frame of the table the ball came
 // from, or (when the stage was picked from the Bonus Field Select menu) a
@@ -1067,7 +1181,11 @@ static const uint32_t *BonusTable(void)
 static void MakeBonusImage(void)
 {
     const uint32_t *table = BonusTable();
+    int full = PortBonusFull(), h = full ? BonusFullLines() : PORT_SCREEN_HEIGHT;
+    int top = full ? BONUS_FULL_BOTTOM - h : BONUS_Y;
     int x, y, k;
+
+    SetBonusFullPieces();
 
     for (x = 0; x < PORT_CANVAS_WIDTH * PORT_CANVAS_HEIGHT; x++)
         sBonusImage[x] = 0xFF000000;
@@ -1082,7 +1200,7 @@ static void MakeBonusImage(void)
         }
     }
     // A 2-pixel frame around the stage.
-    for (y = BONUS_Y - 2; y < BONUS_Y + PORT_SCREEN_HEIGHT + 2; y++)
+    for (y = top - 2; y < top + h + 2; y++)
     {
         for (x = BONUS_X - 2; x < BONUS_X + PORT_SCREEN_WIDTH + 2; x++)
             sBonusImage[y * PORT_CANVAS_WIDTH + x] = BONUS_FRAME;
@@ -1123,10 +1241,10 @@ const struct PortLayout *PortScreenLayout(void)
     case STATE_GAME_MAIN:
     case STATE_GAME_IDLE:
         if (gMain.selectedField >= FIELD_BONUS_START)
-            layout = &sBonusLayout;
+            layout = PortBonusFull() ? &sBonusFullLayout : &sBonusLayout;
         break;
     }
-    if (layout == &sBonusLayout && previous != &sBonusLayout)
+    if ((layout == &sBonusLayout || layout == &sBonusFullLayout) && previous != layout)
         MakeBonusImage();
     previous = layout;
     return layout;

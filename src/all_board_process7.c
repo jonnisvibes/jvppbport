@@ -294,8 +294,15 @@ void UpdateFrameProcess7_DrawBall_BonusBoards()
     if (spriteGroup->baseY < -60)
         spriteGroup->baseY = -60;
 
+#ifdef JVPPBPORT
+    // BONUS STAGE FULL shows lines below the GBA screen: the ball goes on
+    // down out of sight at the drain (layouts.c).
+    if (spriteGroup->baseY > PortBonusBallMaxY())
+        spriteGroup->baseY = PortBonusBallMaxY();
+#else
     if (spriteGroup->baseY > 180)
         spriteGroup->baseY = 180;
+#endif
 
     primaryBall->screenPosition.x = spriteGroup->baseX;
     primaryBall->screenPosition.y = spriteGroup->baseY;
@@ -306,7 +313,11 @@ void UpdateFrameProcess7_DrawBall_BonusBoards()
     oamData->x = oam->xOffset + spriteGroup->baseX;
 
     if (primaryBall->ballHidden)
+#ifdef JVPPBPORT
+        oamData->y = PortBonusBallHiddenY();
+#else
         oamData->y = 200;
+#endif
     else
         oamData->y = oam->yOffset + spriteGroup->baseY;
 

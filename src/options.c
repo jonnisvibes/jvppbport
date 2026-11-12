@@ -229,6 +229,33 @@ void Options_HandleInput(void)
     {
     case OPTIONS_STATE_MAIN:
 #ifdef JVPPBPORT
+        // The SCREEN box's windows (JVPPBPort/src/confirm.c).
+        if (PortConfirmOpen())
+        {
+            if (JOY_NEW(DPAD_LEFT | DPAD_RIGHT))
+            {
+                m4aSongNumStart(SE_MENU_MOVE);
+                PortConfirmSelect(JOY_NEW(DPAD_LEFT) ? 0 : 1);
+            }
+            else if (JOY_NEW(A_BUTTON))
+            {
+                if (PortConfirmPress())
+                    m4aSongNumStart(SE_MENU_SELECT);
+            }
+            else if (JOY_NEW(B_BUTTON))
+            {
+                m4aSongNumStart(SE_MENU_CANCEL);
+                PortConfirmBack();
+            }
+        }
+        if (PortConfirmTakeLeave())
+        {
+            gMain.subState++;
+            SetButtonConfigInputs(gMain_saveData.buttonConfigType);
+            break;
+        }
+        if (PortConfirmOpen())
+            break;
         if (gOptionsData.cursorPosition >= CURSOR_POS_PORT_SCREEN)
         {
             int row = gOptionsData.cursorPosition - CURSOR_POS_PORT_SCREEN;
@@ -260,9 +287,17 @@ void Options_HandleInput(void)
             }
             else if (JOY_NEW(B_BUTTON))
             {
-                m4aSongNumStart(SE_MENU_CANCEL);
-                gMain.subState++;
-                SetButtonConfigInputs(gMain_saveData.buttonConfigType);
+                if (PortOptionsEdited())
+                {
+                    m4aSongNumStart(SE_MENU_SELECT);
+                    PortConfirmAskSave();
+                }
+                else
+                {
+                    m4aSongNumStart(SE_MENU_CANCEL);
+                    gMain.subState++;
+                    SetButtonConfigInputs(gMain_saveData.buttonConfigType);
+                }
             }
             if (!(gMain.systemFrameCount & 7))
                 gOptionsData.cursorBlinkToggle = 1 - gOptionsData.cursorBlinkToggle;
@@ -396,6 +431,14 @@ void Options_HandleInput(void)
         }
         else if (JOY_NEW(B_BUTTON))
         {
+#ifdef JVPPBPORT
+            if (PortOptionsEdited())
+            {
+                m4aSongNumStart(SE_MENU_SELECT);
+                PortConfirmAskSave();
+                break;
+            }
+#endif
             m4aSongNumStart(SE_MENU_CANCEL);
             gMain.subState++;
             SetButtonConfigInputs(gMain_saveData.buttonConfigType);

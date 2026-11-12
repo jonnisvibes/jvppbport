@@ -6,7 +6,7 @@
 //            a JVPPBPort folder from before the rename is moved there)
 //   Linux:   build-JVPPBPort/      (the development build, run from the repo root)
 //   Android: the app's own folder in the phone's shared storage,
-//            Android/data/com.jcppbport/files/ (seen from a PC over USB, so
+//            Android/data/com.jvppbport/files/ (seen from a PC over USB, so
 //            the log, save and screenshots can be copied off; removed with the
 //            app); the app's private folder if that isn't there
 //   JVPPBPORT_DATA_DIR=folder      overrides all
@@ -17,6 +17,7 @@
 // instead). Android does the same (there's no terminal either). On Linux
 // they go to the terminal as before.
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
@@ -165,7 +166,7 @@ int PortReplaceFile(const char *from, const char *to)
 //   Windows: x86_64-w64-mingw32-addr2line -f -p -e build-JVPPBPort-win/JVPPBPort.debug ADDR...
 //            (the debug information kept from that build of the .exe)
 //   Android: printed as libmain.so+OFFSET; llvm-addr2line (in the NDK) -f -p -e
-//            build-JVPPBPort-android/apk/lib/arm64-v8a/libmain.so OFFSET...
+//            build-JVPPBPort-android/libmain.debug.so OFFSET...
 // (Windows addresses are printed as if the program sat at its preferred
 // address, which is what addr2line expects.)
 #ifdef _WIN32
@@ -304,4 +305,17 @@ void PortSystemInit(void)
     signal(SIGBUS, CrashHandler);
     signal(SIGFPE, CrashHandler);
 #endif
+}
+
+// One line in the log (jvppbport.log, or the terminal on Linux), for game code.
+void PortLog(const char *fmt, ...)
+{
+    va_list args;
+
+    fputs("JVPPBPort: ", stderr);
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fputc('\n', stderr);
+    fflush(stderr);
 }

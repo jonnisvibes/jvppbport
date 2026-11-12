@@ -48,7 +48,9 @@
 //                                     KEY_<name> holds a keyboard key instead (SDL's
 //                                     key name, _ for spaces: KEY_Z, KEY_Right_Shift;
 //                                     KEY_Mouse_Left / KEY_Mouse_Right hold a mouse button)
-//   JVPPBPORT_HOLD_EVERY=40:A         also press a GBA button every 40 frames
+//   JVPPBPORT_HOLD_EVERY=40:A         also press a GBA button every 40 frames;
+//                                     40:A:5000 only from frame 5000; several
+//                                     entries with commas (97:B:5000,89:A:5000)
 //   JVPPBPORT_MOUSE=900:move:120:300,910:click,920:rclick,930:wheel:-2,940:hwheel:1
 //                                     (menus only with JVPPBPORT_TOUCH, as fingers)
 //                                     mouse at canvas position / left click / right
@@ -817,6 +819,14 @@ static void ScriptedMouse(const char *entry, size_t len)
         sMouse.inside = TRUE;
         sMouseMoved = TRUE;
     }
+    else if (sscanf(buf, "pmove:%d:%d", &x, &y) == 2)  // a place in the turned picture (TATE MODE)
+    {
+        PortTateToCanvas(&x, &y);
+        sMouse.x = x;
+        sMouse.y = y;
+        sMouse.inside = TRUE;
+        sMouseMoved = TRUE;
+    }
     else if (strcmp(buf, "click") == 0)
         sMouseClicks++;
     else if (strcmp(buf, "down") == 0)  // left button held from here...
@@ -833,12 +843,26 @@ static void ScriptedMouse(const char *entry, size_t len)
 
 static void RunScripts(u32 frame)
 {
-    if (sHoldEvery)
+    // Entries "every:BUTTON[:fromFrame]", separated by commas.
+    for (const char *p = sHoldEvery; p && *p;)
     {
         char *colon;
-        u32 every = strtoul(sHoldEvery, &colon, 10);
-        if (every && *colon == ':' && frame % every < 6)
-            ScriptedPress(colon + 1, strlen(colon + 1));
+        const char *end = strchr(p, ','), *name;
+        size_t len;
+        u32 every = strtoul(p, &colon, 10), from = 0;
+
+        if (!end)
+            end = p + strlen(p);
+        if (every && *colon == ':')
+        {
+            name = colon + 1;
+            len = strcspn(name, ":,");
+            if (name[len] == ':')
+                from = strtoul(name + len + 1, NULL, 10);
+            if (frame >= from && frame % every < 6)
+                ScriptedPress(name, len);
+        }
+        p = *end ? end + 1 : end;
     }
     ScriptEntries(sPresses, frame, 6, ScriptedPress);
     ScriptEntries(sMouseScript, frame, 1, ScriptedMouse);

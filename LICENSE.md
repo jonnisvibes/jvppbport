@@ -10,8 +10,8 @@ any purpose, without asking and without credit (credit is still welcome).
 That covers:
 
 - `JVPPBPort/src/`, `JVPPBPort/include/`, `JVPPBPort/tools/`,
-  `JVPPBPort/windows/` and `JVPPBPort/Makefile`;
-- `docs/`, the top-level `Makefile`, `README.md` and this file;
+  `JVPPBPort/windows/`, `JVPPBPort/android/` and `JVPPBPort/Makefile`;
+- `docs/`, the top-level `Makefile`, `README.md`, `CHANGELOG.md` and this file;
 - the changes made to pret's files for the port: the code inside
   `#ifdef JVPPBPORT` / `#ifndef JVPPBPORT` blocks in `src/` and `include/`.
 

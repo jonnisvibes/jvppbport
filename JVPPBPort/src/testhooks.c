@@ -50,23 +50,45 @@ static void DropBallIntoEvoShopHole(void)
 //    (then pick the Pokémon with A, e.g. JVPPBPORT_PRESS=...,4800:A,4950:A);
 //  - during evolution mode: move the ball onto each evolution item as it
 //    appears, then next to the center hole once the trap door opens.
+// JVPPBPORT_TEST_EVO_PARTY=n (1-6): give n Pokémon to evolve instead of one
+//   (Zigzagoon, Wurmple, Taillow, Seedot, Lotad, Poochyena), for Evolution
+//   Select's side arrows.
+// JVPPBPORT_TEST_EVO_NODROP=1: don't drop the ball in (and don't move it
+//   during evolution mode): the player shoots for the shop themselves, e.g.
+//   after a JVPPBPORT_TEST_BGSAVE made a save of it to CONTINUE on a phone.
+// JVPPBPORT_TEST_COINS=n: at the same frame, set the coins to n (Mart tests).
 static void TestEvolution(u32 frame)
 {
-    static long start = -2;
+    static const u16 party[] = {SPECIES_ZIGZAGOON, SPECIES_WURMPLE, SPECIES_TAILLOW,
+                                SPECIES_SEEDOT, SPECIES_LOTAD, SPECIES_POOCHYENA};
+    static long start = -2, partySize = 1, noDrop, coins = -1;
     static bool8 droppedIn;
+    int i;
 
     if (start == -2)
+    {
         start = getenv("JVPPBPORT_TEST_EVO") ? strtol(getenv("JVPPBPORT_TEST_EVO"), NULL, 10) : -1;
+        if (getenv("JVPPBPORT_TEST_EVO_PARTY"))
+            partySize = strtol(getenv("JVPPBPORT_TEST_EVO_PARTY"), NULL, 10);
+        if (partySize < 1 || partySize > 6)
+            partySize = 1;
+        noDrop = getenv("JVPPBPORT_TEST_EVO_NODROP") != NULL;
+        if (getenv("JVPPBPORT_TEST_COINS"))
+            coins = strtol(getenv("JVPPBPORT_TEST_COINS"), NULL, 10);
+    }
     if (start < 0 || gMain.mainState != STATE_GAME_MAIN || gMain.selectedField >= FIELD_BONUS_START)
         return;
 
     if (frame == (u32)start)
     {
-        gCurrentPinballGame->evolvablePartySpecies[0] = SPECIES_ZIGZAGOON;
-        gCurrentPinballGame->evolvablePartySize = 1;
+        for (i = 0; i < partySize; i++)
+            gCurrentPinballGame->evolvablePartySpecies[i] = party[i];
+        gCurrentPinballGame->evolvablePartySize = partySize;
         gCurrentPinballGame->evoArrowProgress = 3;
+        if (coins >= 0)
+            gCurrentPinballGame->coins = coins;
     }
-    else if (!droppedIn && frame >= (u32)start + EVO_SHOP_SIGN_FRAMES
+    else if (!noDrop && !droppedIn && frame >= (u32)start + EVO_SHOP_SIGN_FRAMES
              && gMain.modeChangeFlags == MODE_CHANGE_NONE && gCurrentPinballGame->ballCatchState == 0)
     {
         // Only during normal play: e.g. not while a drained ball is being saved.
@@ -84,7 +106,7 @@ static void TestEvolution(u32 frame)
                 gCurrentPinballGame->ball->positionQ0.y, gMain.bgOffsets[3].yOffset,
                 gCurrentPinballGame->cameraLocked);
 
-    if (gCurrentPinballGame->boardState != MAIN_BOARD_STATE_EVO_MODE || gMain.modeChangeFlags)
+    if (noDrop || gCurrentPinballGame->boardState != MAIN_BOARD_STATE_EVO_MODE || gMain.modeChangeFlags)
         return;
 
     switch (gCurrentPinballGame->boardSubState)
@@ -120,7 +142,7 @@ static void TestEvolution(u32 frame)
 // into the Mart hole (with nothing to evolve, so the Mart opens).
 static void TestBoardState(u32 frame)
 {
-    static long stateFrame = -2, state, martFrame;
+    static long stateFrame = -2, state, martFrame, loopFrame = -1;
 
     if (stateFrame == -2)
     {
@@ -128,12 +150,21 @@ static void TestBoardState(u32 frame)
         stateFrame = p ? strtol(p, NULL, 10) : -1;
         state = p && strchr(p, ':') ? strtol(strchr(p, ':') + 1, NULL, 10) : -1;
         martFrame = getenv("JVPPBPORT_TEST_MART") ? strtol(getenv("JVPPBPORT_TEST_MART"), NULL, 10) : -1;
+        // JVPPBPORT_TEST_CATCHLOOP=frame: from that frame on, start a Catch 'Em
+        // mode every time the board is back in normal play (as if the ball
+        // had lit the catch arrows and gone in the hole); the game's own
+        // picker chooses the Pokémon, and the autopilot below catches it.
+        if (getenv("JVPPBPORT_TEST_CATCHLOOP"))
+        {
+            loopFrame = strtol(getenv("JVPPBPORT_TEST_CATCHLOOP"), NULL, 10);
+            state = MAIN_BOARD_STATE_CATCH_EM_MODE;
+        }
     }
     if (gMain.mainState != STATE_GAME_MAIN || gMain.selectedField >= FIELD_BONUS_START)
         return;
     // Autopilot for the modes started here: count the bumper hits that
     // reveal the catch tiles, then throw the ball at the Pokémon.
-    if (state >= 0 && stateFrame == -1 && gMain.modeChangeFlags == MODE_CHANGE_NONE && frame % 50 == 0
+    if (state >= 0 && (stateFrame == -1 || loopFrame >= 0) && gMain.modeChangeFlags == MODE_CHANGE_NONE && frame % 50 == 0
         && !getenv("JVPPBPORT_TEST_POND_HITS"))
     {
         struct PinballGame *game = gCurrentPinballGame;
@@ -148,6 +179,17 @@ static void TestBoardState(u32 frame)
             PlaceBall(game->jirachiCenterX + 24, game->jirachiCenterY - 6);
             game->ball->velocity.y = 200;
         }
+        // Catch loop: when the game opens the bonus/boss hole (GO TO BONUS
+        // after some catches), drop the ball beside the center hole so the
+        // game goes on its normal way instead of waiting for the bot.
+        if (loopFrame >= 0 && game->ballCatchState == 0
+            && (game->boardState == MAIN_BOARD_STATE_BONUS_HOLE_ACTIVE
+                || game->boardState == MAIN_BOARD_STATE_BOSS_HOLE_ACTIVE))
+        {
+            game->boardLayerDepth = 0;
+            PlaceBall(119, 265);
+            game->ball->velocity.y = 60;
+        }
         if (game->boardState == MAIN_BOARD_STATE_EGG_HATCH_MODE && game->boardSubState == EGG_HATCH_SUBSTATE_WANDERING)
         {
             game->boardLayerDepth = 0;
@@ -157,7 +199,9 @@ static void TestBoardState(u32 frame)
     if (gCurrentPinballGame->boardState != MAIN_BOARD_STATE_DEFAULT
         || gMain.modeChangeFlags != MODE_CHANGE_NONE || gCurrentPinballGame->ballCatchState != 0)
         return;
-    if (stateFrame >= 0 && frame >= (u32)stateFrame)
+    if (loopFrame >= 0 && frame >= (u32)loopFrame)
+        RequestBoardStateTransition(MAIN_BOARD_STATE_CATCH_EM_MODE);
+    else if (stateFrame >= 0 && frame >= (u32)stateFrame)
     {
         RequestBoardStateTransition(state);
         stateFrame = -1;
@@ -286,6 +330,29 @@ static void TestCharge(void)
 // JVPPBPORT_TEST_POND=frame:state[:frame2], during a Ruby game: at that
 // frame, put that pond state (4 = Lotad, 6 = Whiscash...) in the pond; at
 // frame2, press the bonus multiplier button (the "01" -> "02" sign).
+// JVPPBPORT_TEST_BALL=frame:x:y[:vx:vy[:layer]], Ruby or Sapphire: put the
+// ball there (still, or thrown at that velocity, on that board layer).
+static void TestBall(u32 frame)
+{
+    if (gMain.mainState != STATE_GAME_MAIN || gMain.selectedField >= MAIN_FIELD_COUNT)
+        return;
+    if (getenv("JVPPBPORT_TEST_BALL"))
+    {
+        static long ballFrame = -2, bx, by, vx, vy, layer;
+
+        if (ballFrame == -2)
+            sscanf(getenv("JVPPBPORT_TEST_BALL"), "%ld:%ld:%ld:%ld:%ld:%ld", &ballFrame, &bx, &by, &vx, &vy, &layer);
+        if (ballFrame >= 0 && frame >= (u32)ballFrame && gMain.modeChangeFlags == MODE_CHANGE_NONE)
+        {
+            gCurrentPinballGame->boardLayerDepth = layer;
+            PlaceBall(bx, by);
+            gCurrentPinballGame->ball->velocity.x = vx;
+            gCurrentPinballGame->ball->velocity.y = vy;
+            ballFrame = -1;
+        }
+    }
+}
+
 static void TestPond(u32 frame)
 {
     static long pondFrame = -2, state, multFrame = -1;
@@ -314,20 +381,6 @@ static void TestPond(u32 frame)
         gCurrentPinballGame->rubyPondChangeTimer = 0;  // and the pond button
         gCurrentPinballGame->rubyPondContentsChanging = TRUE;
         multFrame = -1;
-    }
-    // JVPPBPORT_TEST_BALL=frame:x:y: put the ball there (still).
-    if (getenv("JVPPBPORT_TEST_BALL"))
-    {
-        static long ballFrame = -2, bx, by;
-
-        if (ballFrame == -2)
-            sscanf(getenv("JVPPBPORT_TEST_BALL"), "%ld:%ld:%ld", &ballFrame, &bx, &by);
-        if (ballFrame >= 0 && frame >= (u32)ballFrame && gMain.modeChangeFlags == MODE_CHANGE_NONE)
-        {
-            gCurrentPinballGame->boardLayerDepth = 0;
-            PlaceBall(bx, by);
-            ballFrame = -1;
-        }
     }
     // JVPPBPORT_TEST_POND_HITS=n: from the pond frame on, hit bumper 0 every
     // 60 frames, n times.
@@ -566,12 +619,144 @@ static void TestDexAll(void)
         gMain_saveData.pokedexFlags[i] = SPECIES_DEX_CAUGHT;
 }
 
+// JVPPBPORT_TEST_MAKEDEX=n (use a test save!): once, at frame 600 (the save
+// is loaded by then), write a
+// Pokédex with species 0..n-1 caught, plus Latios and Latias, and the four
+// e-Reader exclusives unseen (so Options' E-READER box can unlock them the
+// normal way). Saved to the save file at once.
+static void TestMakeDex(u32 frame)
+{
+    static int done;
+    int i, n;
+
+    if (done || frame < 600 || !getenv("JVPPBPORT_TEST_MAKEDEX"))
+        return;
+    done = 1;
+    n = atoi(getenv("JVPPBPORT_TEST_MAKEDEX"));
+    for (i = 0; i < NUM_SPECIES; i++)
+        gMain_saveData.pokedexFlags[i] = i < n ? SPECIES_DEX_CAUGHT : SPECIES_DEX_UNSEEN;
+    gMain_saveData.pokedexFlags[SPECIES_LATIOS] = SPECIES_DEX_CAUGHT;
+    gMain_saveData.pokedexFlags[SPECIES_LATIAS] = SPECIES_DEX_CAUGHT;
+    for (i = BONUS_SPECIES_START; i < BONUS_SPECIES_START + NUM_BONUS_SPECIES; i++)
+        gMain_saveData.pokedexFlags[i] = SPECIES_DEX_UNSEEN;
+    SaveFile_WriteToSram();
+    fprintf(stderr, "JVPPBPort: test Pokedex written (%d caught + Latios, Latias)\n", n);
+}
+
+// JVPPBPORT_TEST_CATCHLOG=1: print every Catch 'Em species pick (right
+// after PickSpeciesForCatchEmMode ran) with what decides a rare pick:
+// caught species counted at game start, catches this game, the e-Reader
+// card flags and forceSpecialMons (both stay 0 in the port), and the
+// exclusives' Pokédex flags. When the pick is one of the rare ones, take
+// a snapshot once the Pokémon is on the board and again when it's caught.
+static void TestCatchLog(u32 frame)
+{
+    static int on = -1, lastSub = -1, rare, shotOnBoard, startCaught, picks;
+    struct PinballGame *game = gCurrentPinballGame;
+    int sub, species;
+
+    if (on == -1)
+        on = getenv("JVPPBPORT_TEST_CATCHLOG") != NULL;
+    if (!on || gMain.mainState != STATE_GAME_MAIN || gMain.selectedField >= FIELD_BONUS_START)
+        return;
+    sub = game->boardState == MAIN_BOARD_STATE_CATCH_EM_MODE ? game->boardSubState : -1;
+    if (sub == lastSub)
+    {
+        if (rare && game->caughtMonCount > startCaught)
+        {
+            fprintf(stderr, "JVPPBPort: catchlog frame %u: rare Pokemon %d CAUGHT (dex flag now %d)\n",
+                    frame, game->currentSpecies, gMain_saveData.pokedexFlags[game->currentSpecies]);
+            PortRequestSnapshot();
+            rare = 0;
+        }
+        return;
+    }
+    lastSub = sub;
+    if (sub == CATCH_EM_SUBSTATE_LOAD_MON_GRAPHICS)
+    {
+        species = game->currentSpecies;
+        rare = species == SPECIES_LATIOS || species == SPECIES_LATIAS || species >= BONUS_SPECIES_START;
+        shotOnBoard = 0;
+        startCaught = game->caughtMonCount;
+        picks++;
+        fprintf(stderr, "JVPPBPort: catchlog frame %u pick %d: species %d%s caughtThisGame %d dexCaught %d "
+                        "ereader %d %d %d %d %d force %d flags chik %d cynd %d toto %d aero %d latios %d latias %d\n",
+                frame, picks, species, rare ? " RARE" : "", game->caughtMonCount, gBoardConfig.caughtSpeciesCount,
+                gMain.eReaderBonuses[0], gMain.eReaderBonuses[1], gMain.eReaderBonuses[2],
+                gMain.eReaderBonuses[3], gMain.eReaderBonuses[4], game->forceSpecialMons,
+                gMain_saveData.pokedexFlags[SPECIES_CHIKORITA], gMain_saveData.pokedexFlags[SPECIES_CYNDAQUIL],
+                gMain_saveData.pokedexFlags[SPECIES_TOTODILE], gMain_saveData.pokedexFlags[SPECIES_AERODACTYL],
+                gMain_saveData.pokedexFlags[SPECIES_LATIOS], gMain_saveData.pokedexFlags[SPECIES_LATIAS]);
+    }
+    else if (rare && !shotOnBoard && sub == CATCH_EM_SUBSTATE_CATCH_HIT_PHASE)
+    {
+        shotOnBoard = 1;
+        fprintf(stderr, "JVPPBPort: catchlog frame %u: rare Pokemon %d on the board\n", frame, game->currentSpecies);
+        PortRequestSnapshot();
+    }
+}
+
+// JVPPBPORT_TEST_BONUSCOUNT=n: once a main-board game is in normal play,
+// set the number of bonus stages cleared (4 = the next one is Rayquaza).
+static void TestBonusCount(void)
+{
+    static int done;
+
+    if (done || !getenv("JVPPBPORT_TEST_BONUSCOUNT") || gMain.mainState != STATE_GAME_MAIN
+        || gMain.selectedField >= FIELD_BONUS_START || gMain.modeChangeFlags != MODE_CHANGE_NONE)
+        return;
+    gCurrentPinballGame->numCompletedBonusStages = strtol(getenv("JVPPBPORT_TEST_BONUSCOUNT"), NULL, 10);
+    done = TRUE;
+}
+
+// JVPPBPORT_TEST_MARTOPEN=frame, during a Ruby game in normal play: open
+// the Mart's door, as one hit on it does (and with JVPPBPORT_TEST_COINS=n
+// set the coins to n).
+static void TestMartOpen(u32 frame)
+{
+    static long at = -2;
+
+    if (at == -2)
+        at = getenv("JVPPBPORT_TEST_MARTOPEN") ? strtol(getenv("JVPPBPORT_TEST_MARTOPEN"), NULL, 10) : -1;
+    if (at < 0 || frame < (u32)at || gMain.mainState != STATE_GAME_MAIN || gMain.selectedField != FIELD_RUBY
+        || gMain.modeChangeFlags != MODE_CHANGE_NONE)
+        return;
+    gCurrentPinballGame->shopDoorOpenLevel = 3;
+    gCurrentPinballGame->shopDoorAnimDelay = 5;
+    if (getenv("JVPPBPORT_TEST_COINS") && !getenv("JVPPBPORT_TEST_EVO"))
+        gCurrentPinballGame->coins = strtol(getenv("JVPPBPORT_TEST_COINS"), NULL, 10);
+    at = -1;
+}
+
+// JVPPBPORT_TEST_WHISCASH=frame, during a Ruby game in normal play: change
+// the pond now, to Whiscash (as the game does when it forces Whiscash).
+static void TestWhiscash(u32 frame)
+{
+    static long at = -2;
+
+    if (at == -2)
+        at = getenv("JVPPBPORT_TEST_WHISCASH") ? strtol(getenv("JVPPBPORT_TEST_WHISCASH"), NULL, 10) : -1;
+    if (at < 0 || frame < (u32)at || gMain.mainState != STATE_GAME_MAIN || gMain.selectedField != FIELD_RUBY
+        || gMain.modeChangeFlags != MODE_CHANGE_NONE)
+        return;
+    gCurrentPinballGame->forcePondToWhiscash = TRUE;
+    gCurrentPinballGame->rubyPondChangeTimer = 0;
+    gCurrentPinballGame->rubyPondContentsChanging = TRUE;
+    at = -1;
+}
+
 void PortTestHooks(u32 frame)
 {
+    TestWhiscash(frame);
+    TestBonusCount();
+    TestMartOpen(frame);
+    TestMakeDex(frame);
+    TestCatchLog(frame);
     TestDexAll();
     TestFuzz(frame);
     TestBot(frame);
     TestWallCheck(frame);
+    TestBall(frame);
     TestPond(frame);
     TestCharge();
     TestDrain(frame);

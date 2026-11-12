@@ -365,6 +365,17 @@ void ProcessRubyCollisionEvent(u8 triggerType, s16* hasCollisionImpact, u16* col
         }
         break;
     case RUBY_TRIGGER_BALL_LAUNCH_POSITION:
+#ifdef JVPPBPORT
+        // FAST only: a ball on the launcher with the launch ramp closed can't
+        // get out (every new ball opens it; only an older port's escaped-ball
+        // rescue left it closed, and saved games keep that). Open it again.
+        if (gCurrentPinballGame->ballSpeed == BALL_SPEED_FAST && gCurrentPinballGame->boardCollisionConfigChanged)
+        {
+            SetBoardCollisionConfig(0);
+            gCurrentPinballGame->boardCollisionConfigChanged = FALSE;
+            PortLog("launch ramp opened again (ball on the launcher)");
+        }
+#endif
         gCurrentPinballGame->ballInLaunchChute = TRUE;
         gCurrentPinballGame->ballTouchingSpoink = TRUE;
         gCurrentPinballGame->ballCollisionZone = RUBY_ZONE_LAUNCH_CHUTE;

@@ -18,10 +18,12 @@ void PortWatchWrite(const void *dest, uint32_t size);
 // testhooks.c: test-mode helpers, called once per frame.
 void PortTestHooks(uint32_t frame);
 void PortBugSnapshot(uint32_t frame);  // F12, see testhooks.c
+void PortRequestSnapshot(void);        // test hooks: snapshot at the next frame (platform.c)
 
 // audio.c: sound output (see the top of audio.c).
 void PortAudioInit(uint8_t fast);
 void PortAudioFrame(void);
+void PortAudioDiscard(int on);  // audio.c: mix but don't play (hidden frames, platform.c)
 void PortAudioRestartDma(void);
 
 // m4a_port.c
@@ -263,6 +265,8 @@ int PortTouchEnabled(void);
 void PortTouchSetWindow(int windowW, int windowH);
 void PortTouchTestWindow(int *w, int *h);
 void PortTouchScreenSize(int *w, int *h);
+void PortTouchRelayout(void);
+void PortTouchScaleRange(int *min, int *max);
 const uint32_t *PortTouchCompose(const uint32_t *canvas, int w, int h, int dx, int dy);
 void PortTouchCanvasRect(int *x, int *y, int *w, int *h);
 int PortTouchEvent(union SDL_Event *event);
@@ -270,8 +274,12 @@ int PortTouchFrame(void);
 int PortTouchActionHeld(int action);
 int PortTestBotAction(int action);
 void PortTouchReset(void);
+// mouse.c: what the Mart / Evolution Select panel offers right now (0: it
+// isn't open, or isn't taking input), for touch.c's big buttons.
+enum { PORT_SHOP_SIDE = 1, PORT_SHOP_UP = 2, PORT_SHOP_DOWN = 4, PORT_SHOP_BACK = 8 };
+int PortShopArrows(void);
 
-enum { PORT_TOUCH_OFF, PORT_TOUCH_BUTTONS, PORT_TOUCH_ZONES };
+enum { PORT_TOUCH_OFF, PORT_TOUCH_BUTTONS, PORT_TOUCH_ZONES, PORT_TOUCH_PLAIN };
 int PortTouchControls(void);
 void PortSetTouchControls(int mode);
 
@@ -334,9 +342,48 @@ void PortLcdSaveWindow(struct SDL_Renderer *renderer, const char *path);
 // N = N times).
 #define PORT_SCALE_SNAP (-1)
 int PortScaleMode(void);
+int PortScaleMin(void);
 int PortScaleMax(void);
 void PortSetScaleMode(int n);
 int PortFullscreen(void);
+void PortWindowRemember(void);
+void PortWindowRestore(void);
+// confirm.c: KEEP / UNDO after a change to the picture (see there).
+enum { PORT_CONFIRM_KEEP, PORT_CONFIRM_UNDO };
+int PortConfirmOpen(void);
+int PortConfirmSelected(void);
+void PortConfirmSelect(int choice);
+void PortConfirmBegin(int leaveOnKeep);
+void PortConfirmAskSave(void);
+void PortConfirmBack(void);
+void PortConfirmAbort(void);
+int PortConfirmTakeLeave(void);
+int PortConfirmPress(void);
+void PortConfirmFrame(void);
+void PortConfirmButton(int which, int *x, int *y, int *w, int *h);
+void PortConfirmDraw(uint32_t *canvas);
+void PortSettingsHold(int hold);  // settings.c: while on, the file isn't written
+int PortBonusFull(void);        // layouts.c: Options -> SCREEN -> BONUS STAGE
+void PortSetBonusFull(int on);
+int PortBonusBallMaxY(void);    // layouts.c: lowest screen line for the bonus stage ball's sprite
+int PortBonusBallHiddenY(void); // layouts.c: where a hidden bonus stage ball is parked
+int PortBonusIntroView(int adjust);   // layouts.c: Rayquaza's opening in FULL: the camera move kept
+int PortBonusIntroAdjust(int adjust); // (0 outside the opening)
+int PortOptionsRowH(void);      // screenmenu.c: lines per row of the port's boxes
+int PortOptionsEdited(void);    // SCREEN's rows hold choices not confirmed yet
+int PortOptionsApply(int leaveOnKeep);  // puts them to use; returns 1 if KEEP CHANGES? opened
+void PortOptionsDiscard(void);
+int PortOptionsRowEdited(int row);
+int PortOptionsRowDim(int row);
+int PortOptionsScrollBy(int dy);  // ppu.c: drags the Options screen; 0 if it fits
+uint32_t PortOptionsLinePixel(int sx, int sy);  // ppu.c: the Options screen's backgrounds
+int PortFieldSpeedRect(int *x, int *y, int *w, int *h);  // mouse.c: Ball Speed is being chosen, its box
+// platform.c: Options -> SCREEN -> TATE MODE (PC): the picture turned a quarter
+// for a monitor stood on its side, with Windows left in landscape.
+enum { PORT_TATE_OFF, PORT_TATE_ON, PORT_TATE_REVERSE, PORT_TATE_COUNT };
+int PortTate(void);
+void PortSetTate(int mode);
+void PortTateToCanvas(int *x, int *y);
 void PortSetFullscreen(int on);
 // screenmenu.c: the port's boxes on the Options screen, PINBALL KEYS,
 // SCREEN and MENU KEYS (see there), from GBA screen line

@@ -26,6 +26,10 @@
 # next to it (both made the first time, never in the repo; keep them: an .apk
 # signed with another key can't update the installed game, and uninstalling
 # it deletes the save). Like Windows, it reuses the Linux build's data.
+# RELEASE=1 makes the public .apk: not debuggable, and its version code is
+# exactly the port version's (0.2.0 = 20000, as in VERSION_CODE below). Test
+# builds are debuggable and count up from there with the APK build number, so
+# a phone can always install the next test build over the last one.
 
 PREPROC   := tools/preproc/preproc
 # PREGEN=1 (the public repo, made by JVPPBPort/tools/export_public.sh): the
@@ -64,8 +68,17 @@ BUILD_TOOLS := $(ANDROID_HOME)/build-tools/36.0.0
 ANDROID_JAR := $(ANDROID_HOME)/platforms/android-35/android.jar
 MIN_SDK  := 26
 TARGET_SDK := 35
-CC       := $(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android$(MIN_SDK)-clang
-KEYSTORE := $(HOME)/Android/jcppbport.keystore
+NDK_BIN  := $(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
+CC       := $(NDK_BIN)/aarch64-linux-android$(MIN_SDK)-clang
+# Signing keys: JVPPBPort/private/ when it exists (the private repo keeps
+# them there, never exported), otherwise ~/Android/ (made the first time).
+# Release builds use their own release key; test builds the older test key.
+KEYDIR   := $(if $(wildcard JVPPBPort/private/*.keystore),JVPPBPort/private,$(HOME)/Android)
+ifeq ($(RELEASE),1)
+KEYSTORE ?= $(KEYDIR)/jvppbport-release.keystore
+else
+KEYSTORE ?= $(KEYDIR)/jcppbport.keystore
+endif
 KEYSTORE_PASS := $(KEYSTORE).pass
 SDL_VERSION := 2.32.10
 SDL_SHA256  := 5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
@@ -107,6 +120,10 @@ CFLAGS   += -Wno-attributes
 # Debug info names files relative to the repo, not the folder it was built in
 # (that path holds the builder's user name, and the .debug file is shared).
 CFLAGS   += -ffile-prefix-map=$(CURDIR)=.
+ifeq ($(ANDROID),1)
+# The NDK lives in the home folder, so its header paths would name the user too.
+CFLAGS   += -ffile-prefix-map=$(abspath $(NDK))=ndk
+endif
 
 # Game sources from pret, minus the ones the port replaces.
 GAME_EXCLUDE := src/agb_sram.c
@@ -192,12 +209,16 @@ $(TARGET): $(BUILD)/unsigned.apk $(KEYSTORE)
 $(KEYSTORE):
 	@test ! -e $(KEYSTORE_PASS) || { echo "$(KEYSTORE_PASS) exists but $@ doesn't"; exit 1; }
 	(umask 077 && head -c 18 /dev/urandom | base64 > $(KEYSTORE_PASS))
-	keytool -genkeypair -keystore $@ -storepass:file $(KEYSTORE_PASS) -alias jcppbport -keyalg RSA -keysize 2048 \
+	@mkdir -p $(dir $@)
+	keytool -genkeypair -keystore $@ -storepass:file $(KEYSTORE_PASS) -alias jvppbport -keyalg RSA -keysize 4096 \
 	    -validity 36500 -dname "CN=JVPPBPort"
 
 # The game and SDL2 as libraries (SDLActivity loads libSDL2.so and libmain.so).
+# The debug information stays in $(BUILD)/libmain.debug.so (to turn crash
+# offsets in the log into function names); the .apk gets a stripped copy.
 $(APK_LIBS)/libmain.so: $(LINK_OBJS) $(BUILD)/gen/build_id.o $(APK_LIBS)/libSDL2.so
-	$(CC) $(LDFLAGS) -o $@ $(LINK_OBJS) $(BUILD)/gen/build_id.o $(LDLIBS)
+	$(CC) $(LDFLAGS) -o $(BUILD)/libmain.debug.so $(LINK_OBJS) $(BUILD)/gen/build_id.o $(LDLIBS)
+	$(NDK_BIN)/llvm-objcopy --strip-debug $(BUILD)/libmain.debug.so $@
 
 $(SDL_TAR):
 	@mkdir -p $(dir $@)
@@ -211,7 +232,8 @@ $(SDL_SRC)/Android.mk: $(SDL_TAR)
 
 $(APK_LIBS)/libSDL2.so: $(SDL_SRC)/Android.mk | $(NDK)/ndk-build
 	$(NDK)/ndk-build NDK_PROJECT_PATH=null APP_BUILD_SCRIPT=$(abspath $<) NDK_OUT=$(BUILD)/sdl/obj \
-	    NDK_LIBS_OUT=$(BUILD)/sdl/lib APP_ABI=arm64-v8a APP_PLATFORM=android-$(MIN_SDK) APP_MODULES=SDL2 -j8
+	    NDK_LIBS_OUT=$(BUILD)/sdl/lib APP_ABI=arm64-v8a APP_PLATFORM=android-$(MIN_SDK) APP_MODULES=SDL2 -j8 \
+	    APP_CFLAGS="-ffile-prefix-map=$(abspath $(SDL_SRC))=SDL2 -ffile-prefix-map=$(abspath $(NDK))=ndk"
 	@mkdir -p $(dir $@)
 	cp $(BUILD)/sdl/lib/arm64-v8a/libSDL2.so $@
 
@@ -236,17 +258,39 @@ $(BUILD)/iconres/.done: JVPPBPort/tools/makeicon.py
 	    $(BUILD)/iconres/mipmap-$(word 1,$(subst :, ,$(d)))/ic_launcher_fg.png &&) true
 	touch $@
 
-VERSION_CODE := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
-$(BUILD)/unsigned.apk: JVPPBPort/android/AndroidManifest.xml $(shell find JVPPBPort/android/res -type f) \
+# Version code (Android only installs a higher one over an installed app):
+# MAJOR*1000000 + MINOR*10000 + PATCH*100 from version.h, plus, for test
+# builds, the next APK build number (JVPPBPort/tools/apk_version.txt, private;
+# missing = 0).
+PORT_VER := $(shell sed -n 's/^\#define PORT_VERSION "\(.*\)"/\1/p' JVPPBPort/include/version.h)
+RELEASE_CODE := $(shell echo $(PORT_VER) | awk -F. '{print $$1*1000000 + $$2*10000 + $$3*100}')
+ifeq ($(RELEASE),1)
+VERSION_CODE := $(RELEASE_CODE)
+VERSION_NAME := $(PORT_VER)
+DEBUG_MODE   :=
+else
+APK_BUILD    := $(shell echo $$(( $$(cat JVPPBPort/tools/apk_version.txt 2>/dev/null || echo 0) + 1 )))
+VERSION_CODE := $(shell echo $$(( $(RELEASE_CODE) + $(APK_BUILD) )))
+VERSION_NAME := $(PORT_VER)-test.$(APK_BUILD)
+DEBUG_MODE   := --debug-mode
+endif
+# Rewritten only when the version or release mode changes, so the .apk is
+# repacked then.
+APK_MODE := $(VERSION_CODE) $(VERSION_NAME) $(DEBUG_MODE)
+$(BUILD)/apkmode.txt: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(APK_MODE)' | cmp -s - $@ || echo '$(APK_MODE)' > $@
+.PHONY: FORCE
+$(BUILD)/unsigned.apk: $(BUILD)/apkmode.txt JVPPBPort/android/AndroidManifest.xml $(shell find JVPPBPort/android/res -type f) \
                        $(BUILD)/iconres/.done $(BUILD)/apk/classes.dex $(APK_LIBS)/libmain.so $(APK_LIBS)/libSDL2.so \
                        JVPPBPort/tools/apkadd.py \
                        | $(BUILD_TOOLS)/aapt2
 	rm -rf $(BUILD)/res && mkdir -p $(BUILD)/res
 	$(BUILD_TOOLS)/aapt2 compile --dir JVPPBPort/android/res -o $(BUILD)/res/port.zip
 	$(BUILD_TOOLS)/aapt2 compile --dir $(BUILD)/iconres -o $(BUILD)/res/icons.zip
-	$(BUILD_TOOLS)/aapt2 link -o $(BUILD)/resources.apk -I $(ANDROID_JAR) --manifest $< --debug-mode \
+	$(BUILD_TOOLS)/aapt2 link -o $(BUILD)/resources.apk -I $(ANDROID_JAR) --manifest JVPPBPort/android/AndroidManifest.xml $(DEBUG_MODE) \
 	    --min-sdk-version $(MIN_SDK) --target-sdk-version $(TARGET_SDK) \
-	    --version-code $(VERSION_CODE) --version-name "1.0.$(VERSION_CODE)" \
+	    --version-code $(VERSION_CODE) --version-name "$(VERSION_NAME)" \
 	    $(BUILD)/res/port.zip $(BUILD)/res/icons.zip
 	python3 JVPPBPort/tools/apkadd.py $(BUILD)/resources.apk $@ $(BUILD)/apk classes.dex lib/arm64-v8a/libSDL2.so lib/arm64-v8a/libmain.so
 

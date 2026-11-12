@@ -1,5 +1,5 @@
 // JVPPBPort: calls into the Android app's Java side
-// (JVPPBPort/android/java/com/jcppbport/JCPPBActivity.java). Empty on other
+// (JVPPBPort/android/java/com/jvppbport/JVPPBActivity.java). Empty on other
 // systems.
 #ifndef __ANDROID__
 #include "jvppbport.h"

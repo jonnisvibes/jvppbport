@@ -85,7 +85,10 @@ same) but draws differently:
 `layouts.c` re-lays out the short screens (title, Field Select, Pokédex,
 high scores) for the tall window: each is drawn as pieces of the GBA screen
 moved to new places, over stretched backgrounds. Only drawing changes. Bonus
-stages are drawn over the dimmed main table they were entered from.
+stages are drawn over the dimmed main table they were entered from; with
+BONUS STAGE set to FULL, the stage's camera is held still and all of its
+rows are drawn at once (the game's own scrolling values are put back
+afterwards, so the stage plays the same).
 
 ## Input
 
@@ -97,6 +100,18 @@ buttons until the cursor reaches the item pointed at, so sounds and scrolling
 are the game's. Options gets the port's own boxes (`screenmenu.c`) for keys
 and screen settings, kept in `jvppbport.ini` (`settings.c`), so the save
 file stays exactly the GBA's.
+
+## Android
+
+The same C code is built with the Android NDK as `libmain.so`, loaded by
+SDL's Java activity (`JVPPBPort/android/`, plus a small activity of our own
+for the ROM file picker and vibration in `android.c`). `touch.c` lays out the
+screen for the device's shape (the table at the top, a cabinet strip with
+the flipper and pause buttons below) and turns fingers into pinball actions,
+tilt swipes or mouse clicks for the menus. The table pictures made at first
+start are drawn by hidden copies of the program; an Android app can't start
+a program file, so there they are `fork()`ed copies of the app with no window. When the app goes to the background, the
+game in progress is saved as the pause menu's SAVE does.
 
 ## Checking against the GBA
 

@@ -1069,8 +1069,22 @@ int PortFontTextWidth(int font, const char *s);
 #define NORMAL_OR_FAST(normal, fast) (gCurrentPinballGame->ballSpeed == BALL_SPEED_FAST ? (fast) : (normal))
 int PortBallSpeed(void);
 extern u32 gPortEscapedBalls;  // FAST balls put back in the launcher (src/all_board_process5.c)
+void PortLog(const char *fmt, ...);  // a "JVPPBPort: ..." line in jvppbport.log (system.c)
 void PortSetBallSpeed(int speed);
 int PortNextBallSpeed(int speed, int dir);
+int PortBonusFull(void);
+int PortBonusIntroView(int adjust);
+int PortBonusIntroAdjust(int adjust);
+int PortBonusBallMaxY(void);
+int PortBonusBallHiddenY(void);
+int PortConfirmOpen(void);
+int PortConfirmSelected(void);
+void PortConfirmSelect(int choice);
+void PortConfirmBack(void);
+int PortConfirmPress(void);
+int PortConfirmTakeLeave(void);
+void PortConfirmAskSave(void);
+int PortOptionsEdited(void);
 void PortDrawBallSpeed(struct SpriteGroup *group, int speed);
 #define PORT_FONT_LABEL 1           // like Field Select's NORMAL / SLOW (text.c)
 enum

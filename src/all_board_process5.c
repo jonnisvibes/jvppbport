@@ -90,17 +90,33 @@ static void PortRescueEscapedBall(struct BallState *ball)
 {
     if (gCurrentPinballGame->ballSpeed != BALL_SPEED_FAST)
         return;
+    // A ball the board is holding can be parked off the table on purpose
+    // (Sapphire's Pelipper return puts it at -28,-10): leave those alone.
+    if (gCurrentPinballGame->ballPhysicsState != BALL_PHYSICS_NORMAL)
+        return;
     if (ball->positionQ8.x >= Q_24_8(4) && ball->positionQ8.x <= Q_24_8(251) && ball->positionQ8.y >= Q_24_8(4))
         return;
     gPortEscapedBalls++;
+    PortLog("ball rescued at %d,%d field %d", ball->positionQ8.x >> 8, ball->positionQ8.y >> 8, gMain.selectedField);
+    // Like a new ball (InitBallState + the mode change code): at the launcher,
+    // and the launch ramp open again. Ruby closes its ramp (collision config 1)
+    // once a ball has gone up it; a ball put back with it closed hits it at the
+    // overpass on every launch (playtester, 2026-11-11, saved games too).
+    ball->positionQ0.x = gBoardConfig.fieldLayout.ballSpawnX;
+    ball->positionQ0.y = gBoardConfig.fieldLayout.ballSpawnY;
     ball->positionQ8.x = Q_24_8(gBoardConfig.fieldLayout.ballSpawnX);
     ball->positionQ8.y = Q_24_8(gBoardConfig.fieldLayout.ballSpawnY);
     ball->positionQ1.x = gBoardConfig.fieldLayout.ballSpawnX * 2;
     ball->positionQ1.y = gBoardConfig.fieldLayout.ballSpawnY * 2;
+    ball->prevPositionQ8 = ball->positionQ8;
     ball->velocity.x = 0;
     ball->velocity.y = 0;
+    ball->spinSpeed = 0;
+    ball->oamPriority = gMain.selectedField == FIELD_RUBY ? 3 : 1;
     gCurrentPinballGame->boardLayerDepth = 0;
     gCurrentPinballGame->ballInLowerHalf = TRUE;
+    SetBoardCollisionConfig(0);
+    gCurrentPinballGame->boardCollisionConfigChanged = FALSE;
 }
 #endif
 
@@ -155,9 +171,9 @@ void UpdateFrameProcess5_BallMovement_MainBoards(void)
             {
                 // Gravity is applied at different strengths, depending on fast the ball is
                 // currently moving downwards.
-                if (currentBall->velocity.y > NORMAL_OR_FAST(200, 300))
+                if (currentBall->velocity.y > NORMAL_OR_FAST(200, 270))
                     currentBall->velocity.y += gGravityDeltas_Light[gCurrentPinballGame->gravityStrengthIndex];
-                else if (currentBall->velocity.y > NORMAL_OR_FAST(100, 150))
+                else if (currentBall->velocity.y > NORMAL_OR_FAST(100, 135))
                     currentBall->velocity.y += gGravityDeltas_Medium[gCurrentPinballGame->gravityStrengthIndex];
                 else
                     currentBall->velocity.y += gGravityDeltas_Strong[gCurrentPinballGame->gravityStrengthIndex];
@@ -170,11 +186,11 @@ void UpdateFrameProcess5_BallMovement_MainBoards(void)
 
             if (currentBall->positionQ0.y < 380)
             {
-                UPDATE_BALL_POSITION(NORMAL_OR_FAST(336, 504), angle);
+                UPDATE_BALL_POSITION(NORMAL_OR_FAST(336, 454), angle);
             }
             else
             {
-                UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 600), angle);
+                UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 540), angle);
             }
         }
     }
@@ -210,9 +226,9 @@ void UpdateFrameProcess5_BallMovement_BonusBoards(void)
         {
             // Gravity is applied at different strengths, depending on fast the ball is
             // currently moving downwards.
-            if (currentBall->velocity.y > NORMAL_OR_FAST(150, 225))
+            if (currentBall->velocity.y > NORMAL_OR_FAST(150, 203))
                 currentBall->velocity.y += gGravityDeltas_Light[gCurrentPinballGame->gravityStrengthIndex];
-            else if (currentBall->velocity.y > NORMAL_OR_FAST(75, 113))
+            else if (currentBall->velocity.y > NORMAL_OR_FAST(75, 101))
                 currentBall->velocity.y += gGravityDeltas_Medium[gCurrentPinballGame->gravityStrengthIndex];
             else
                 currentBall->velocity.y += gGravityDeltas_Strong[gCurrentPinballGame->gravityStrengthIndex];
@@ -272,33 +288,33 @@ void UpdateFrameProcess5_BallMovement_BonusBoards(void)
             {
                 if (currentBall->positionQ0.y < 150)
                 {
-                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(304, 456), angle);
+                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(304, 410), angle);
                 }
                 else
                 {
-                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 600), angle);
+                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 540), angle);
                 }
             }
             else if (gMain.selectedField == FIELD_SPHEAL)
             {
                 if (currentBall->positionQ0.y < 218)
                 {
-                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(272, 408), angle);
+                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(272, 367), angle);
                 }
                 else
                 {
-                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 600), angle);
+                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 540), angle);
                 }
             }
             else
             {
                 if (currentBall->positionQ0.y < 218)
                 {
-                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(304, 456), angle);
+                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(304, 410), angle);
                 }
                 else
                 {
-                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 600), angle);
+                    UPDATE_BALL_POSITION(NORMAL_OR_FAST(400, 540), angle);
                 }
             }
         }

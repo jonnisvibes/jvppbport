@@ -732,7 +732,12 @@ void RenderRayquazaSprites(void)
         {
             oamSimple = &group->oam[i];
             var0 = (s8)oamSimple->yOffset + group->baseY;
+#ifdef JVPPBPORT
+            // FULL shows lines below 160: pieces go on down out of sight (layouts.c).
+            if (var0 > PortBonusBallMaxY() || var0 < -60)
+#else
             if (var0 > 180 || var0 < -60)
+#endif
             {
                 gOamBuffer[oamSimple->oamId].x = 240;
                 gOamBuffer[oamSimple->oamId].y = 180;
@@ -754,7 +759,12 @@ void RenderRayquazaSprites(void)
         {
             oamSimple = &group->oam[i];
             var0 = (s8)oamSimple->yOffset + group->baseY;
+#ifdef JVPPBPORT
+            // FULL shows lines below 160: pieces go on down out of sight (layouts.c).
+            if (var0 > PortBonusBallMaxY() || var0 < -60)
+#else
             if (var0 > 180 || var0 < -60)
+#endif
             {
                 gOamBuffer[oamSimple->oamId].x = 240;
                 gOamBuffer[oamSimple->oamId].y = 180;
@@ -795,8 +805,14 @@ void RenderRayquazaSprites(void)
 
             if (group->baseY < -70)
                 group->baseY = -70;
+#ifdef JVPPBPORT
+            // FULL shows lines below 160: park it lower, out of sight (layouts.c).
+            if (group->baseY > PortBonusBallMaxY())
+                group->baseY = PortBonusBallMaxY();
+#else
             if (group->baseY > 180)
                 group->baseY = 180;
+#endif
 
             var1 = gRayquazaAnimFramesetTable[gCurrentPinballGame->bossFramesetIndex][0];
             if (gCurrentPinballGame->legendaryFlashState > 9)
@@ -2004,8 +2020,14 @@ void UpdateRayquazaIntroSequence(void)
 
                 if (group->baseY < -60)
                     group->baseY = -60;
+#ifdef JVPPBPORT
+                // FULL shows lines below 160: park it lower, out of sight (layouts.c).
+                if (group->baseY > PortBonusBallMaxY())
+                    group->baseY = PortBonusBallMaxY();
+#else
                 if (group->baseY > 180)
                     group->baseY = 180;
+#endif
 
                 oamSimple = &group->oam[0];
                 gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;
@@ -2052,8 +2074,14 @@ void UpdateRayquazaIntroSequence(void)
         {
             group->baseX = gCurrentPinballGame->minionLogicPosition[0].x / 10;
             group->baseY = gCurrentPinballGame->minionLogicPosition[0].y / 10;
+#ifdef JVPPBPORT
+            // FULL shows lines below 160: park it lower, out of sight (layouts.c).
+            if (group->baseY > PortBonusBallMaxY())
+                group->baseY = PortBonusBallMaxY();
+#else
             if (group->baseY > 180)
                 group->baseY = 180;
+#endif
             else if (gCurrentPinballGame->introFrameCounter < 256)
                 gCurrentPinballGame->minionLogicPosition[0].y += 20;
 
@@ -2073,8 +2101,14 @@ void UpdateRayquazaIntroSequence(void)
         {
             group->baseX = gCurrentPinballGame->minionLogicPosition[1].x / 10;
             group->baseY = gCurrentPinballGame->minionLogicPosition[1].y / 10;
+#ifdef JVPPBPORT
+            // FULL shows lines below 160: park it lower, out of sight (layouts.c).
+            if (group->baseY > PortBonusBallMaxY())
+                group->baseY = PortBonusBallMaxY();
+#else
             if (group->baseY > 180)
                 group->baseY = 180;
+#endif
             else if (gCurrentPinballGame->introFrameCounter < 256)
                 gCurrentPinballGame->minionLogicPosition[1].y += 10;
 
@@ -2102,8 +2136,14 @@ void UpdateRayquazaIntroSequence(void)
 
             if (group->baseY < -60)
                 group->baseY = -60;
+#ifdef JVPPBPORT
+            // FULL shows lines below 160: park it lower, out of sight (layouts.c).
+            if (group->baseY > PortBonusBallMaxY())
+                group->baseY = PortBonusBallMaxY();
+#else
             if (group->baseY > 180)
                 group->baseY = 180;
+#endif
 
             oamSimple = &group->oam[0];
             gOamBuffer[oamSimple->oamId].x = oamSimple->xOffset + group->baseX;

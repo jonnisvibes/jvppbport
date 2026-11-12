@@ -87,6 +87,38 @@ void InitFrameProcess2_CameraShakeDrain_AllBoards(void)
     gCurrentPinballGame->scrollEffectYpx = gMain.bgOffsets[3].yOffset;
     gCurrentPinballGame->scrollEffectX = gCurrentPinballGame->scrollEffectYpx;
     gCurrentPinballGame->cameraLookAhead = 0x1000;
+#ifdef JVPPBPORT
+    // BONUS STAGE FULL: start with the held camera of the bonus stage frames
+    // below (only the scroll registers, which nothing reads back), so the
+    // fade in already shows the stage where it stays. The game's start
+    // camera differs on some stages (Spheal), which showed as a jump.
+    if (PortBonusFull() && gMain.selectedField >= FIELD_BONUS_START)
+    {
+        s16 y = gBoardConfig.fieldLayout.cameraScrollMinY - 80;
+
+        if (gMain.selectedField == FIELD_RAYQUAZA)
+            y += PortBonusIntroView(gCurrentPinballGame->cameraYAdjust);
+        gMain.bgOffsets[2].yOffset = y;
+        gMain.bgOffsets[3].yOffset = y;
+        switch (gMain.selectedField)
+        {
+        case FIELD_DUSCLOPS:
+            gMain.bgOffsets[1].yOffset = y / 2;
+            break;
+        case FIELD_KECLEON:
+            gMain.bgOffsets[1].yOffset = 0;
+            break;
+        case FIELD_KYOGRE:
+        case FIELD_GROUDON:
+            gMain.bgOffsets[1].yOffset = y;
+            break;
+        case FIELD_RAYQUAZA:
+            gMain.bgOffsets[1].yOffset = y;
+            gMain.bgOffsets[3].yOffset = y / 4 + 224;
+            break;
+        }
+    }
+#endif
 }
 
 void UpdateFrameProcess2_CameraShakeDrain_MainBoards(void)
@@ -237,6 +269,30 @@ void UpdateFrameProcess2_CameraShakeDrain_BonusBoards(void)
     }
 
     ProcessTiltInput();
+#ifdef JVPPBPORT
+    // BONUS STAGE FULL: the whole stage is shown, so the camera stays at its
+    // top and nothing moves the picture here (tilt and shake become a wobble
+    // of the whole picture, PortTableWobble). The values are put back below.
+    {
+    s16 portTiltX = gCurrentPinballGame->tiltXOffset, portTiltY = gCurrentPinballGame->tiltYOffset;
+    s16 portShakeX = gCurrentPinballGame->screenShakeX, portShakeY = gCurrentPinballGame->screenShakeY;
+    s16 portScroll = gCurrentPinballGame->cameraScrollOffset, portAdjust = gCurrentPinballGame->cameraYAdjust;
+    bool8 portFull = PortBonusFull();
+
+    if (portFull)
+    {
+        // Rayquaza's opening keeps its camera move (PortBonusIntroAdjust, layouts.c).
+        s16 portKeepAdjust = PortBonusIntroAdjust(portAdjust);
+
+        gCurrentPinballGame->tiltXOffset = gCurrentPinballGame->tiltYOffset = 0;
+        gCurrentPinballGame->screenShakeX = gCurrentPinballGame->screenShakeY = 0;
+        gCurrentPinballGame->cameraScrollOffset = 0;
+        gCurrentPinballGame->cameraYAdjust = portKeepAdjust;
+        gCurrentPinballGame->cameraBaseY = gBoardConfig.fieldLayout.cameraScrollMinY - 80;
+        gCurrentPinballGame->cameraYQ8 = gCurrentPinballGame->cameraBaseY << 8;
+        gCurrentPinballGame->scrollEffectX = gCurrentPinballGame->cameraBaseY + portKeepAdjust;
+    }
+#endif
     gMain.bgOffsets[2].xOffset = gCurrentPinballGame->cameraBaseX + gCurrentPinballGame->tiltXOffset + 8 + gCurrentPinballGame->screenShakeX;
     gCurrentPinballGame->scrollEffectYpx = gCurrentPinballGame->cameraBaseY + gCurrentPinballGame->tiltYOffset + gCurrentPinballGame->cameraScrollOffset + gCurrentPinballGame->cameraYAdjust + gCurrentPinballGame->screenShakeY;
     var3 = gCurrentPinballGame->scrollEffectX - gCurrentPinballGame->scrollEffectYpx;
@@ -286,6 +342,15 @@ void UpdateFrameProcess2_CameraShakeDrain_BonusBoards(void)
     gCurrentPinballGame->cameraXOffset = gCurrentPinballGame->cameraBaseX + gCurrentPinballGame->tiltXOffset + gCurrentPinballGame->screenShakeX;
     gCurrentPinballGame->cameraYOffset = gCurrentPinballGame->cameraBaseY + gCurrentPinballGame->tiltYOffset + gCurrentPinballGame->cameraScrollOffset + gCurrentPinballGame->cameraYAdjust + gCurrentPinballGame->screenShakeY;
     gCurrentPinballGame->cameraYViewport = gCurrentPinballGame->cameraBaseY + gCurrentPinballGame->tiltYOffset + gCurrentPinballGame->cameraScrollOffset + gCurrentPinballGame->cameraYAdjust;
+#ifdef JVPPBPORT
+    if (portFull)
+    {
+        gCurrentPinballGame->tiltXOffset = portTiltX, gCurrentPinballGame->tiltYOffset = portTiltY;
+        gCurrentPinballGame->screenShakeX = portShakeX, gCurrentPinballGame->screenShakeY = portShakeY;
+        gCurrentPinballGame->cameraScrollOffset = portScroll, gCurrentPinballGame->cameraYAdjust = portAdjust;
+    }
+    }
+#endif
 }
 
 void ProcessTiltInput(void)

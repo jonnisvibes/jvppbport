@@ -433,7 +433,7 @@ void ComputeWallReflection(u16 collisionAngle, struct Vector16 *inputVelocity, s
     if (BALL_SPEED_IS_SLOW)
         scaledForwardMag = forwardMag * 21;
     else
-        scaledForwardMag = forwardMag * NORMAL_OR_FAST(26, 39);
+        scaledForwardMag = forwardMag * NORMAL_OR_FAST(26, 35);
 
     forwardMag = scaledForwardMag / 100;
     scaledLateralMag = (lateralMag * 8) / 10;
@@ -554,8 +554,8 @@ void ApplyBounceBackForce(u16 collisionAngle, struct Vector32 *outputVelocity, u
             }
             else
             {
-                tempVec.x = MulCos(NORMAL_OR_FAST(285, 428), collisionAngle);
-                tempVec.y = MulSin(-NORMAL_OR_FAST(285, 428), collisionAngle);
+                tempVec.x = MulCos(NORMAL_OR_FAST(285, 385), collisionAngle);
+                tempVec.y = MulSin(-NORMAL_OR_FAST(285, 385), collisionAngle);
             }
 
             gCurrentPinballGame->slingshotHitAnimTimer = 4;

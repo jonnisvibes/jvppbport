@@ -147,12 +147,22 @@ void PortSettingsClearSection(const char *section)
     }
 }
 
+// A change that may still be undone (confirm.c) isn't written yet.
+static int sHold;
+
+void PortSettingsHold(int hold)
+{
+    sHold = hold;
+}
+
 void PortSettingsSave(void)
 {
     char tmp[1110];
     FILE *f;
     int i, j;
 
+    if (sHold)
+        return;
     if (!sLoaded)
         Load();
     snprintf(tmp, sizeof(tmp), "%s.tmp", sPath);

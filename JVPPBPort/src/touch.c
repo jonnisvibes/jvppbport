@@ -17,7 +17,8 @@
 // - Launch (BUTTONS): a finger on Spoink (the launcher, bottom right of
 //   the main tables) holds LAUNCH while it stays down, like the right
 //   flipper.
-// - Options -> PINBALL -> TOUCH < BUTTONS / ZONES / OFF >. ZONES: no
+// - Options -> PINBALL -> TOUCH < BUTTONS / PLAIN / ZONES / OFF >. PLAIN:
+//   BUTTONS without the flipper pictures on the round buttons. ZONES: no
 //   cabinet; the table sits in the middle of a black screen with a small
 //   pause button in the top right corner (BACK in the Mart). A finger
 //   anywhere else on the screen's left half holds the left flipper, on the
@@ -27,12 +28,14 @@
 //   controller): no flipper or pause buttons and no tilt swipes; the table
 //   sits in the middle of the cabinet. Taps still work the menus (and say
 //   yes to prompts). Kept in jvppbport.ini [Controls] TouchButtons
-//   (0 off, 1 buttons, 2 zones).
+//   (0 off, 1 buttons, 2 zones, 3 plain).
 // - The Mart and Evolution Select (their own arrows are small targets on a
-//   phone, and paging through the Mart's items was hard): the flipper buttons show arrows and press
-//   Left / Right (on the GBA the left flipper is the D-pad too), and in the
-//   Mart the middle button is a BACK button (it was always B there; now it
-//   says so). Evolution Select has no back, so its middle button pauses.
+//   phone): big round arrow buttons lie over the panel's arrows (ShopZoneAt,
+//   ShopOverlay), the flipper buttons (still drawn as flippers) press Left / Right
+//   (on the GBA the left flipper is the D-pad too), and the Mart has a BACK
+//   button under its panel in every TOUCH mode. A finger on the picture
+//   between the arrows picks it (mouse.c). Evolution Select has no back on
+//   the GBA, so its middle button pauses.
 // - Menus where B goes back (Options, Pokédex, Field Select...) get a BACK
 //   button in the top left corner (with Android's gesture navigation,
 //   Back is an edge swipe and hard to hit).
@@ -78,6 +81,8 @@ enum
     ZONE_SWIPE,   // on the table while playing: swipes tilt
     ZONE_MOUSE,   // would work like the mouse, but another finger already does
     ZONE_MENU,    // works like the mouse (only one finger at a time)
+    ZONE_UP,      // Evolution Select's arrows over and under the picture
+    ZONE_DOWN,
 };
 
 static struct
@@ -85,6 +90,7 @@ static struct
     SDL_FingerID id;
     int zone;
     float x0, y0;  // where it went down, in screen pixels
+    float lastY;   // a drag of the Options screen: where it was last
     bool8 used;    // a swipe that already tilted; in a menu: a swipe, not a tap
     int8_t axis;   // a menu swipe: 0 across, 1 up/down
     int steps;     // a menu swipe: D-pad presses made so far
@@ -94,6 +100,7 @@ static int sFingerCount;
 
 static int sEnabled = -1;
 static int sScreenW, sScreenH;  // the whole screen, in screen pixels
+static int sWindowW, sWindowH;  // the window (or the shape being tried on a PC)
 static int sGameX;              // the game's canvas in a game: (sGameX, 0)
 static uint32_t sScreen[MAX_SCREEN_W * MAX_SCREEN_H];
 static int sTiltAction = -1, sTiltFrames;
@@ -104,12 +111,12 @@ static int sControls = -1;      // PORT_TOUCH_* (-1: not read yet)
 // Layout of the strip (worked out by Layout()).
 static int sStripY, sButtonR, sLeftX, sRightX, sButtonY, sPauseR;
 
-#define BACK_W 50           // the Mart's BACK button (in the strip's middle)
-#define BACK_H 22
 #define MENU_BACK_X 12      // menus' BACK button (in from the screen's rounded corner)
 #define MENU_BACK_Y 16
 #define MENU_BACK_W 46
 #define MENU_BACK_H 20
+#define SPEED_R 17          // Field Select's Ball Speed arrows, beside its box
+#define SPEED_GAP 5
 
 int PortTouchEnabled(void)
 {
@@ -134,7 +141,7 @@ int PortTouchControls(void)
     if (sControls < 0)
     {
         sControls = PortSettingGetInt("Controls", "TouchButtons", PORT_TOUCH_BUTTONS);
-        if (sControls < PORT_TOUCH_OFF || sControls > PORT_TOUCH_ZONES)
+        if (sControls < PORT_TOUCH_OFF || sControls > PORT_TOUCH_PLAIN)
             sControls = PORT_TOUCH_BUTTONS;
     }
     return sControls;
@@ -148,18 +155,56 @@ void PortSetTouchControls(int mode)
     PortTouchReset();
 }
 
+// Whole-number scales for this window (Options -> SCREEN -> SCALE): at most
+// what leaves the table and the cabinet strip on screen, at least what the
+// picture buffers can hold. *max is below *min if none works.
+void PortTouchScaleRange(int *min, int *max)
+{
+    int w = sWindowW > 0 ? sWindowW : PORT_CANVAS_WIDTH, h = sWindowH > 0 ? sWindowH : PORT_CANVAS_HEIGHT + MIN_STRIP;
+
+    *max = w / PORT_CANVAS_WIDTH < h / (PORT_CANVAS_HEIGHT + MIN_STRIP) ? w / PORT_CANVAS_WIDTH : h / (PORT_CANVAS_HEIGHT + MIN_STRIP);
+    for (*min = 1; w / *min > MAX_SCREEN_W || h / *min > MAX_SCREEN_H; ++*min)
+        ;
+}
+
+// The whole-number scale in use, 0 for FILL (or if none works for this window).
+static int LayoutScale(void)
+{
+    int min, max, n = PortScaleMode();
+
+    PortTouchScaleRange(&min, &max);
+    if (n == 0 || max < min)
+        return 0;
+    if (n == PORT_SCALE_SNAP)
+        return max;
+    return n < min ? min : n > max ? max : n;
+}
+
 static void Layout(int windowW, int windowH)
 {
-    int gameW = PORT_CANVAS_WIDTH, gameH = PORT_CANVAS_HEIGHT;  // the table's canvas
+    int gameW = PORT_CANVAS_WIDTH, gameH = PORT_CANVAS_HEIGHT, n;  // the table's canvas
 
     if (windowW <= 0 || windowH <= 0)
         windowW = gameW, windowH = gameH + MIN_STRIP;
-    // The screen in canvas pixels, with the window's shape: as wide as the
-    // table, unless that leaves less than MIN_STRIP under it.
-    sScreenH = (int)((long)gameW * windowH / windowW);
-    if (sScreenH < gameH + MIN_STRIP)
-        sScreenH = gameH + MIN_STRIP;
-    sScreenW = (int)((long)sScreenH * windowW / windowH);
+    sWindowW = windowW;
+    sWindowH = windowH;
+    n = LayoutScale();
+    if (n)
+    {
+        // Whole-number scale: the screen is that many times smaller than
+        // the window (the table doesn't grow to fill it; the cabinet does).
+        sScreenW = windowW / n;
+        sScreenH = windowH / n;
+    }
+    else
+    {
+        // The screen in canvas pixels, with the window's shape: as wide as the
+        // table, unless that leaves less than MIN_STRIP under it.
+        sScreenH = (int)((long)gameW * windowH / windowW);
+        if (sScreenH < gameH + MIN_STRIP)
+            sScreenH = gameH + MIN_STRIP;
+        sScreenW = (int)((long)sScreenH * windowW / windowH);
+    }
     if (sScreenW < gameW)
         sScreenW = gameW;
     if (sScreenW > MAX_SCREEN_W)
@@ -171,14 +216,18 @@ static void Layout(int windowW, int windowH)
 
     sStripY = gameH;
     sButtonR = (sScreenH - sStripY - 22) / 2;
-    if (sButtonR > 44)
-        sButtonR = 44;
     if (sButtonR > sScreenW * 16 / 100)
         sButtonR = sScreenW * 16 / 100;
     sButtonY = sStripY + 4 + (sScreenH - sStripY) / 2 - 4;
     sLeftX = 10 + sButtonR;
     sRightX = sScreenW - 10 - sButtonR;
     sPauseR = 11;
+}
+
+// Options -> SCALE changed: the same window, laid out for the new scale.
+void PortTouchRelayout(void)
+{
+    Layout(sWindowW, sWindowH);
 }
 
 // A game (or bonus stage) is on: the cabinet is shown.
@@ -220,6 +269,12 @@ static int MenuBackShown(void)
 // menu canvas is the screen's size and fills it).
 static int sCanvasW = PORT_CANVAS_WIDTH, sCanvasH = PORT_CANVAS_HEIGHT;
 
+// The cabinet's round buttons are on.
+static int HasButtons(void)
+{
+    return PortTouchControls() == PORT_TOUCH_BUTTONS || PortTouchControls() == PORT_TOUCH_PLAIN;
+}
+
 static int CanvasX(void)
 {
     return (sScreenW - sCanvasW) / 2;
@@ -227,7 +282,7 @@ static int CanvasX(void)
 
 static int CanvasY(void)
 {
-    return GameOn() && PortTouchControls() == PORT_TOUCH_BUTTONS ? 0 : (sScreenH - sCanvasH) / 2;
+    return GameOn() && HasButtons() ? 0 : (sScreenH - sCanvasH) / 2;
 }
 
 // ZONES: the pause button's middle, in the top right corner (in the black
@@ -468,16 +523,46 @@ static void TextButton(int x, int y, int w, int h, const char *text, int pressed
     PortDrawBoldText(x + (w - PortBoldTextWidth(text)) / 2, y + (h - 5) / 2, text, 0xFFFFFFFF, 0xFF000000, Plot);
 }
 
+// A bigger labelled button (the Mart's BACK): the text drawn twice as big.
+static int sBigX, sBigY;
+static void PlotBig(int x, int y, uint32_t c)
+{
+    int px = sBigX + x * 2, py = sBigY + y * 2;
+
+    Box(px, py, 2, 2, c);
+}
+
+static void BigTextButton(int x, int y, int w, int h, const char *text, int pressed)
+{
+    TextButton(x, y, w, h, "", pressed);
+    sBigX = x + (w - PortBoldTextWidth(text) * 2) / 2;
+    sBigY = y + (h - 10) / 2;
+    PortDrawBoldText(0, 0, text, 0xFFFFFFFF, 0xFF000000, PlotBig);
+}
+
 // An arrow on a round button (the Mart and Evolution Select): dir -1 left, 1 right.
 static void ButtonArrow(int cx, int cy, int r, int dir)
 {
-    int x, y, half = r * 45 / 100;
+    int x, y, half = r * 60 / 100;
 
     for (y = -half; y <= half; y++)
     {
-        int len = half - (y < 0 ? -y : y);  // the triangle's width on this line
+        int len = (half - (y < 0 ? -y : y)) * 5 / 4;  // the triangle's width on this line
         for (x = 0; x <= len; x++)
-            Plot(cx + dir * (x - half / 2), cy + y, x == len || y == -half || y == half ? 0xFF1A3A78 : 0xFF2858A8);
+            Plot(cx + dir * (x - half * 5 / 8), cy + y, x == len || y == -half || y == half ? 0xFF1A3A78 : 0xFF2858A8);
+    }
+}
+
+// The same pointing up (dir -1) or down.
+static void ButtonArrowV(int cx, int cy, int r, int dir)
+{
+    int x, y, half = r * 60 / 100;
+
+    for (x = -half; x <= half; x++)
+    {
+        int len = (half - (x < 0 ? -x : x)) * 5 / 4;
+        for (y = 0; y <= len; y++)
+            Plot(cx + x, cy + dir * (y - half * 5 / 8), y == len || x == -half || x == half ? 0xFF1A3A78 : 0xFF2858A8);
     }
 }
 
@@ -489,6 +574,93 @@ static int ZoneHeld(int zone)
         if (sFingers[i].zone == zone)
             return TRUE;
     return FALSE;
+}
+
+// ---- The shops' big buttons, on the panel (GBA screen places) ----
+#define SHOP_R 17            // the round arrow buttons
+#define SHOP_LEFT_X 18       // beside the picture (over the panel's own arrows)
+#define SHOP_RIGHT_X 126
+#define SHOP_MID_X 74        // over and under the picture (Evolution Select)
+#define SHOP_MID_Y 104
+#define SHOP_UP_Y 64
+#define SHOP_DOWN_Y 144
+#define SHOP_BACK_Y 152      // under the panel
+#define SHOP_BACK_W 96
+#define SHOP_BACK_H 32
+
+static void ShopOverlay(void)
+{
+    int arrows = PortShopArrows(), x, y;
+
+    if (!arrows)
+        return;
+    PortScreenToCanvas(0, 0, &x, &y);
+    x += CanvasX();
+    y += CanvasY();
+    if (arrows & PORT_SHOP_SIDE)
+    {
+        int left = ZoneHeld(ZONE_LEFT), right = ZoneHeld(ZONE_RIGHT);
+
+        RoundButton(x + SHOP_LEFT_X, y + SHOP_MID_Y, SHOP_R, left);
+        ButtonArrow(x + SHOP_LEFT_X, y + SHOP_MID_Y + (left ? 3 : 0), SHOP_R, -1);
+        RoundButton(x + SHOP_RIGHT_X, y + SHOP_MID_Y, SHOP_R, right);
+        ButtonArrow(x + SHOP_RIGHT_X, y + SHOP_MID_Y + (right ? 3 : 0), SHOP_R, 1);
+    }
+    if (arrows & PORT_SHOP_UP)
+    {
+        RoundButton(x + SHOP_MID_X, y + SHOP_UP_Y, SHOP_R - 3, ZoneHeld(ZONE_UP));
+        ButtonArrowV(x + SHOP_MID_X, y + SHOP_UP_Y + (ZoneHeld(ZONE_UP) ? 3 : 0), SHOP_R - 3, -1);
+    }
+    if (arrows & PORT_SHOP_DOWN)
+    {
+        RoundButton(x + SHOP_MID_X, y + SHOP_DOWN_Y, SHOP_R - 3, ZoneHeld(ZONE_DOWN));
+        ButtonArrowV(x + SHOP_MID_X, y + SHOP_DOWN_Y + (ZoneHeld(ZONE_DOWN) ? 3 : 0), SHOP_R - 3, 1);
+    }
+    if (arrows & PORT_SHOP_BACK)
+        BigTextButton(x + 120 - SHOP_BACK_W / 2, y + SHOP_BACK_Y - SHOP_BACK_H / 2, SHOP_BACK_W, SHOP_BACK_H, "BACK", ZoneHeld(ZONE_PAUSE));
+}
+
+// The button of the shop's big buttons at this screen place, or ZONE_NONE.
+static int ShopZoneAt(float fx, float fy)
+{
+    int arrows = PortShopArrows(), x, y, sx, sy;
+
+    if (!arrows)
+        return ZONE_NONE;
+    PortScreenToCanvas(0, 0, &x, &y);
+    sx = (int)fx - CanvasX() - x;
+    sy = (int)fy - CanvasY() - y;
+    if ((arrows & PORT_SHOP_BACK) && sx >= 120 - SHOP_BACK_W / 2 - 6 && sx < 120 + SHOP_BACK_W / 2 + 6
+        && sy >= SHOP_BACK_Y - SHOP_BACK_H / 2 - 6 && sy < SHOP_BACK_Y + SHOP_BACK_H / 2 + 6)
+        return ZONE_PAUSE;
+    if ((arrows & PORT_SHOP_SIDE) && sy >= SHOP_MID_Y - 34 && sy < SHOP_MID_Y + 30)
+    {
+        if (sx < 37)
+            return ZONE_LEFT;
+        if (sx >= 112 && sx < 143)
+            return ZONE_RIGHT;
+    }
+    if (sx >= 37 && sx < 112)
+    {
+        if ((arrows & PORT_SHOP_UP) && sy >= SHOP_UP_Y - 20 && sy < 80)
+            return ZONE_UP;
+        if ((arrows & PORT_SHOP_DOWN) && sy >= 126 && sy < SHOP_DOWN_Y + 20)
+            return ZONE_DOWN;
+    }
+    return ZONE_NONE;
+}
+
+// Field Select's Ball Speed arrows: the middle of the left one (dir -1) or the
+// right one, on the screen. FALSE if they aren't shown.
+static int SpeedArrow(int dir, int *cx, int *cy)
+{
+    int x, y, w, h;
+
+    if (!PortFieldSpeedRect(&x, &y, &w, &h))
+        return FALSE;
+    *cx = CanvasX() + (dir < 0 ? x - SPEED_GAP - SPEED_R : x + w + SPEED_GAP + SPEED_R);
+    *cy = CanvasY() + y + h / 2;
+    return TRUE;
 }
 
 // The whole screen: the game's canvas (w x h) inside the cabinet, moved by
@@ -516,6 +688,18 @@ const uint32_t *PortTouchCompose(const uint32_t *canvas, int w, int h, int dx, i
                 memcpy(&sScreen[(CanvasY() + y) * sScreenW + CanvasX()], &canvas[y * w], w * 4);
         if (MenuBackShown())
             TextButton(MENU_BACK_X, MENU_BACK_Y, MENU_BACK_W, MENU_BACK_H, "< BACK", ZoneHeld(ZONE_PAUSE));
+        {
+            int dir, cx, cy, zone;
+
+            for (dir = -1; dir <= 1; dir += 2)
+            {
+                if (!SpeedArrow(dir, &cx, &cy))
+                    break;
+                zone = dir < 0 ? ZONE_LEFT : ZONE_RIGHT;
+                RoundButton(cx, cy, SPEED_R, ZoneHeld(zone));
+                ButtonArrow(cx, cy + (ZoneHeld(zone) ? 3 : 0), SPEED_R, dir);
+            }
+        }
         return sScreen;
     }
     if (Zones())
@@ -537,10 +721,9 @@ const uint32_t *PortTouchCompose(const uint32_t *canvas, int w, int h, int dx, i
     }
     if (Zones())
     {
-        if (MartOpen())
-            TextButton(sScreenW - MENU_BACK_X - BACK_W, CornerY() - BACK_H / 2, BACK_W, BACK_H, "BACK", ZoneHeld(ZONE_PAUSE));
-        else
+        if (!MartOpen())
             PauseButton(CornerX(), CornerY(), sPauseR, ZoneHeld(ZONE_PAUSE));
+        ShopOverlay();
         return sScreen;
     }
     if (sGameX >= 3)
@@ -553,28 +736,24 @@ const uint32_t *PortTouchCompose(const uint32_t *canvas, int w, int h, int dx, i
     {
         if (CanvasY() >= 3)
             ChromeBox(0, CanvasY() - 3, sScreenW, 3, 0);
+        ShopOverlay();
         return sScreen;
     }
 
-    if (ShopOpen())
-    {
-        // ZONES too: here they are arrows, not flippers.
-        RoundButton(sLeftX, sButtonY, sButtonR, ZoneHeld(ZONE_LEFT));
-        RoundButton(sRightX, sButtonY, sButtonR, ZoneHeld(ZONE_RIGHT));
-        ButtonArrow(sLeftX, sButtonY + (ZoneHeld(ZONE_LEFT) ? 3 : 0), sButtonR, -1);
-        ButtonArrow(sRightX, sButtonY + (ZoneHeld(ZONE_RIGHT) ? 3 : 0), sButtonR, 1);
-    }
-    else if (PortTouchControls() == PORT_TOUCH_BUTTONS)
+    // (In the Mart and Evolution Select they look the same but press
+    // Left / Right; the panel has its own big arrows.)
     {
         RoundButton(sLeftX, sButtonY, sButtonR, ZoneHeld(ZONE_LEFT));
         RoundButton(sRightX, sButtonY, sButtonR, ZoneHeld(ZONE_RIGHT));
-        Flipper(sLeftX, sButtonY + (ZoneHeld(ZONE_LEFT) ? 3 : 0), sButtonR, 1, ZoneHeld(ZONE_LEFT));
-        Flipper(sRightX, sButtonY + (ZoneHeld(ZONE_RIGHT) ? 3 : 0), sButtonR, -1, ZoneHeld(ZONE_RIGHT));
+        if (PortTouchControls() == PORT_TOUCH_BUTTONS)
+        {
+            Flipper(sLeftX, sButtonY + (ZoneHeld(ZONE_LEFT) ? 3 : 0), sButtonR, 1, ZoneHeld(ZONE_LEFT));
+            Flipper(sRightX, sButtonY + (ZoneHeld(ZONE_RIGHT) ? 3 : 0), sButtonR, -1, ZoneHeld(ZONE_RIGHT));
+        }
     }
-    if (MartOpen())
-        TextButton(sScreenW / 2 - BACK_W / 2, sButtonY - BACK_H / 2, BACK_W, BACK_H, "BACK", ZoneHeld(ZONE_PAUSE));
-    else
+    if (!MartOpen())
         PauseButton(sScreenW / 2, sButtonY, sPauseR, ZoneHeld(ZONE_PAUSE));
+    ShopOverlay();
     return sScreen;
 }
 
@@ -596,23 +775,32 @@ static int SpoinkAt(float x, float y)
 
 static int ZoneAt(float x, float y)
 {
-    int dx = (int)x - sScreenW / 2, dy = (int)y - sButtonY, r = sPauseR + 8;
+    int dx = (int)x - sScreenW / 2, dy = (int)y - sButtonY, r = sPauseR + 8, zone;
 
     if (!GameOn())
     {
-        if (MenuBackShown() && x >= MENU_BACK_X - 4 && x < MENU_BACK_X + MENU_BACK_W + 4
-            && y >= MENU_BACK_Y - 4 && y < MENU_BACK_Y + MENU_BACK_H + 4)
+        if (MenuBackShown() && x >= MENU_BACK_X - 8 && x < MENU_BACK_X + MENU_BACK_W + 8
+            && y >= MENU_BACK_Y - 8 && y < MENU_BACK_Y + MENU_BACK_H + 8)
             return ZONE_PAUSE;  // Esc: back
+        for (zone = -1; zone <= 1; zone += 2)
+        {
+            int cx, cy;
+
+            if (SpeedArrow(zone, &cx, &cy) && (int)x >= cx - SPEED_R - 6 && (int)x <= cx + SPEED_R + 6
+                && (int)y >= cy - SPEED_R - 8 && (int)y <= cy + SPEED_R + 8)
+                return zone < 0 ? ZONE_LEFT : ZONE_RIGHT;
+        }
         return ZONE_MOUSE;
     }
+    if ((zone = ShopZoneAt(x, y)) != ZONE_NONE)
+        return zone;
     if (!PortTouchControls())
         return Playing() ? ZONE_SWIPE : ZONE_MOUSE;  // swipes don't tilt then
     if (Zones())
     {
         int cx = (int)x - CornerX(), cy = (int)y - CornerY();
 
-        if (MartOpen() ? x >= sScreenW - MENU_BACK_X - BACK_W - 6 && cy > -BACK_H / 2 - 8 && cy < BACK_H / 2 + 8
-                       : cx * cx + cy * cy <= r * r)
+        if (!MartOpen() && cx * cx + cy * cy <= r * r)
             return ZONE_PAUSE;
         if (Playing() && !PortGameChoiceOpen())
             return x < sScreenW / 2 ? ZONE_LEFT : ZONE_RIGHT;
@@ -621,13 +809,7 @@ static int ZoneAt(float x, float y)
     if (y >= sStripY)
     {
         if (MartOpen())
-        {
-            if (dx > -BACK_W / 2 - 4 && dx < BACK_W / 2 + 4 && dy > -BACK_H / 2 - 6 && dy < BACK_H / 2 + 6)
-                return ZONE_PAUSE;  // BACK
-            if (dx > -BACK_W / 2 - 4 && dx < BACK_W / 2 + 4)
-                return ZONE_NONE;
-            return dx < 0 ? ZONE_LEFT : ZONE_RIGHT;
-        }
+            return dx < 0 ? ZONE_LEFT : ZONE_RIGHT;  // its BACK is under the panel
         if (dx * dx + dy * dy <= r * r)
             return ZONE_PAUSE;
         if (dx > -r && dx < r)
@@ -723,6 +905,14 @@ static void MenuSwipe(int i, float x, float y)
             return;
         sFingers[i].used = TRUE;
         sFingers[i].axis = dx * dx < dy * dy;
+        sFingers[i].lastY = y;
+    }
+    // Options, if it's taller than the screen: up/down drags it.
+    if (sFingers[i].axis && gMain.mainState == STATE_OPTIONS && !PortConfirmOpen()
+        && PortOptionsScrollBy((int)(y - sFingers[i].lastY)))
+    {
+        sFingers[i].lastY += (int)(y - sFingers[i].lastY);
+        return;
     }
     d = sFingers[i].axis ? -dy : dx;
     steps = d >= SWIPE_MIN ? 1 + (int)((d - SWIPE_MIN) / SWIPE_STEP)
@@ -752,6 +942,18 @@ static void ShopArrow(int dir)
     wheel.type = SDL_MOUSEWHEEL;
     wheel.wheel.which = SDL_TOUCH_MOUSEID;
     wheel.wheel.x = dir;
+    PortInputEvent(&wheel);
+}
+
+// Evolution Select's arrows over and under the picture: Up or Down once.
+static void ShopArrowUpDown(int dir)
+{
+    SDL_Event wheel;
+
+    memset(&wheel, 0, sizeof(wheel));
+    wheel.type = SDL_MOUSEWHEEL;
+    wheel.wheel.which = SDL_TOUCH_MOUSEID;
+    wheel.wheel.y = dir;
     PortInputEvent(&wheel);
 }
 
@@ -799,8 +1001,10 @@ int PortTouchEvent(SDL_Event *event)
         }
         if (sFingers[i].zone == ZONE_PAUSE)
             sPausePressed = TRUE;
-        if (ShopOpen() && (sFingers[i].zone == ZONE_LEFT || sFingers[i].zone == ZONE_RIGHT))
+        if ((ShopOpen() || !GameOn()) && (sFingers[i].zone == ZONE_LEFT || sFingers[i].zone == ZONE_RIGHT))
             ShopArrow(sFingers[i].zone == ZONE_LEFT ? -1 : 1);
+        if (sFingers[i].zone == ZONE_UP || sFingers[i].zone == ZONE_DOWN)
+            ShopArrowUpDown(sFingers[i].zone == ZONE_UP ? 1 : -1);
         return 0;
     case SDL_FINGERMOTION:
         PortWindowToPicture(event->tfinger.x, event->tfinger.y, &x, &y);

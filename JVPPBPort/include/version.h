@@ -3,6 +3,6 @@
 // (JVPPBPort/windows/jvppbport.rc), so keep it to #defines only.
 #define PORT_NAME "Jonnisvibes PPB Port"
 #define PORT_VERSION_MAJOR 0
-#define PORT_VERSION_MINOR 1
+#define PORT_VERSION_MINOR 2
 #define PORT_VERSION_PATCH 0
-#define PORT_VERSION "0.1.0"
+#define PORT_VERSION "0.2.0"

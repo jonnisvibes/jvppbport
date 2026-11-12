@@ -200,7 +200,7 @@ static SDL_Texture *sBig;    // the picture, k times bigger
 static SDL_Texture *sCols;   // outW x 1: stripes and column gaps
 static SDL_Texture *sRows;   // 1 x outH: row gaps
 static int sBigW, sBigH, sK;
-static int sMaskW, sMaskH, sMaskMode;
+static int sMaskW, sMaskH, sMaskMode, sMaskTate;
 static float sMaskScale, sMaskX, sMaskY, sAdd;
 static int sBroken;          // the renderer can't do it (no render targets): plain pixels
 
@@ -226,7 +226,7 @@ static float Row(float f)
 
 // Average of a cell profile over window pixel [p, p+1), whose game pixels
 // start at `origin` and are `scale` window pixels big.
-static float Cover(int p, float origin, float scale, int c, int across)
+static float Cover(int p, float origin, float scale, int c, int across, int flip)
 {
     float sum = 0;
     int i;
@@ -235,6 +235,8 @@ static float Cover(int p, float origin, float scale, int c, int across)
     {
         float u = (p + (i + 0.5f) / SAMPLES - origin) / scale;
         float f = u - floorf(u);
+        if (flip)
+            f = 1 - f;  // TATE MODE: this axis runs against the game's
         sum += across ? Column(f, c) : Row(f);
     }
     return sum / SAMPLES;
@@ -250,7 +252,7 @@ static uint8_t Byte(float v)
 // them: whole bytes), and makes the tables that undo the clipping.
 static void MakeCorrection(const uint32_t *cols, int outW, const uint32_t *rows, int outH, uint8_t add)
 {
-    static uint32_t colCount[3][256], rowCount[256];
+    static uint32_t colCount[3][256], rowCount[3][256];
     static float out[3][256];
     float reach = 1, knee;
     int x, y, c, v, t, a, b;
@@ -261,7 +263,8 @@ static void MakeCorrection(const uint32_t *cols, int outW, const uint32_t *rows,
         for (c = 0; c < 3; c++)
             colCount[c][(cols[x] >> (16 - 8 * c)) & 0xFF]++;
     for (y = 0; y < outH; y++)
-        rowCount[rows[y] & 0xFF]++;
+        for (c = 0; c < 3; c++)
+            rowCount[c][(rows[y] >> (16 - 8 * c)) & 0xFF]++;
     for (c = 0; c < 3; c++)
     {
         for (v = 0; v < 256; v++)
@@ -270,9 +273,9 @@ static void MakeCorrection(const uint32_t *cols, int outW, const uint32_t *rows,
             for (b = 0; colCount[c][a] && b < 256; b++)
             {
                 float gain = a / 255.0f * (b / 255.0f) + add / 255.0f;
-                float weight = (float)colCount[c][a] * rowCount[b] / ((float)outW * outH);
+                float weight = (float)colCount[c][a] * rowCount[c][b] / ((float)outW * outH);
 
-                if (!rowCount[b])
+                if (!rowCount[c][b])
                     continue;
                 for (v = 0; v < 256; v++)
                 {
@@ -320,6 +323,24 @@ static void MakeCorrection(const uint32_t *cols, int outW, const uint32_t *rows,
     }
 }
 
+// One window pixel of the mask across the game's columns (stripes and gaps),
+// for color c: with weak stripes, the stripe and the other two blend toward
+// one gray cell.
+static float ColumnMask(int p, float origin, float scale, float grid, float stripes, int c, int flip)
+{
+    float own = Cover(p, origin, scale, c, 1, flip);
+    float neutral = (Cover(p, origin, scale, 0, 1, flip) + Cover(p, origin, scale, 1, 1, flip) + Cover(p, origin, scale, 2, 1, flip))
+                    / (1 + 2 * STRIPE_LEAK);
+
+    return 1 - grid * (1 - (neutral + (own - neutral) * stripes));
+}
+
+// One window pixel of the mask across the game's rows (the gaps).
+static float RowMask(int p, float origin, float scale, float grid, int flip)
+{
+    return 1 - grid * (1 - Cover(p, origin, scale, 0, 0, flip));
+}
+
 // Makes the two masks for a window of outW x outH whose game pixels start at
 // (x0, y0) and are `scale` big.
 static void MakeMasks(SDL_Renderer *renderer, int outW, int outH, float x0, float y0, float scale)
@@ -337,6 +358,9 @@ static void MakeMasks(SDL_Renderer *renderer, int outW, int outH, float x0, floa
     sGapY = sGapY > GAP_MAX ? GAP_MAX : sGapY;
     double sumCol = 0, sumRow = 0;
     int x, y, c;
+    // TATE MODE: the picture is on its side, so the game's columns (with the
+    // subpixel stripes) run along the window's y and its rows along x.
+    int tate = PortTate(), reverse = tate == PORT_TATE_REVERSE;
 
     grid = grid < 0 ? 0 : grid > 1 ? 1 : grid;
     stripes = stripes < 0 ? 0 : stripes > 1 ? 1 : stripes;
@@ -346,13 +370,8 @@ static void MakeMasks(SDL_Renderer *renderer, int outW, int outH, float x0, floa
 
         for (c = 0; c < 3; c++)
         {
-            // With weak stripes, the stripe of color c and the other two
-            // blend toward one gray cell.
-            float own = Cover(x, x0, scale, c, 1);
-            float neutral = (Cover(x, x0, scale, 0, 1) + Cover(x, x0, scale, 1, 1) + Cover(x, x0, scale, 2, 1))
-                            / (1 + 2 * STRIPE_LEAK);
-            float v = neutral + (own - neutral) * stripes;
-            v = 1 - grid * (1 - v);
+            float v = tate ? RowMask(x, x0, scale, grid, reverse) : ColumnMask(x, x0, scale, grid, stripes, c, 0);
+
             px |= (uint32_t)Byte(v) << (16 - 8 * c);
             sumCol += v;
         }
@@ -360,12 +379,19 @@ static void MakeMasks(SDL_Renderer *renderer, int outW, int outH, float x0, floa
     }
     for (y = 0; y < outH; y++)
     {
-        float v = 1 - grid * (1 - Cover(y, y0, scale, 0, 0));
-        rows[y] = 0xFF000000 | 0x010101u * Byte(v);
-        sumRow += v;
+        uint32_t px = 0xFF000000;
+
+        for (c = 0; c < 3; c++)
+        {
+            float v = tate ? ColumnMask(y, y0, scale, grid, stripes, c, !reverse) : RowMask(y, y0, scale, grid, 0);
+
+            px |= (uint32_t)Byte(v) << (16 - 8 * c);
+            sumRow += v;
+        }
+        rows[y] = px;
     }
     // The faint second copy brings the average back to BRIGHTNESS.
-    sAdd = BRIGHTNESS - (float)(sumCol / (3.0 * outW) * (sumRow / outH));
+    sAdd = BRIGHTNESS - (float)(sumCol / (3.0 * outW) * (sumRow / (3.0 * outH)));
     sAdd = sAdd < 0 ? 0 : sAdd > 1 ? 1 : sAdd;
     MakeCorrection(cols, outW, rows, outH, Byte(sAdd));
 
@@ -450,10 +476,11 @@ int PortLcdDraw(SDL_Renderer *renderer, SDL_Texture *picture, int w, int h, floa
         return 0;
     }
     if (outW != sMaskW || outH != sMaskH || scale != sMaskScale || x0 != sMaskX || y0 != sMaskY
-        || PortLcdFilter() != sMaskMode || !sCols || !sRows)
+        || PortLcdFilter() != sMaskMode || PortTate() != sMaskTate || !sCols || !sRows)
     {
         MakeMasks(renderer, outW, outH, x0, y0, scale);
         sMaskMode = PortLcdFilter();
+        sMaskTate = PortTate();
     }
     sHaveCorrection = 1;
 

@@ -1,10 +1,12 @@
 # Third-party notices
 
-The Windows program (`JVPPBPort.exe`) has these libraries built into it.
+The Windows program (`JVPPBPort.exe`) and the Android app (`.apk`) have these
+libraries built into them.
 
 ## SDL2
 
-Simple DirectMedia Layer 2.32.10, https://www.libsdl.org/, under the zlib license:
+Simple DirectMedia Layer 2.32.10, https://www.libsdl.org/ (in the Android app
+also SDL's Java code), under the zlib license:
 
 ```
 Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
@@ -27,9 +29,9 @@ freely, subject to the following restrictions:
 
 ```
 
-## MinGW-w64 runtime and GCC runtime library
+## MinGW-w64 runtime and GCC runtime library (Windows)
 
-The program is built with MinGW-w64 (https://www.mingw-w64.org/), whose C
+The Windows program is built with MinGW-w64 (https://www.mingw-w64.org/), whose C
 runtime start-up and support code is linked into it. Those files are in the
 public domain or under permissive licenses (Zope Public License 2.1, MIT
 style). Parts of GCC's runtime library (libgcc) are included under the GNU
