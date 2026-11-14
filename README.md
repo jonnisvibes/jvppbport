@@ -114,8 +114,7 @@ The mouse works in the menus too: point at an item, left click to choose it,
 right click to go back. The left and right mouse buttons can also be set as
 pinball keys.
 
-Other keys: **Alt+Enter** or **F11** switches fullscreen. **F12** while
-playing saves a bug snapshot (see [Reporting bugs](#reporting-bugs)).
+Other keys: **Alt+Enter** or **F11** switches fullscreen.
 
 ## Touch controls (Android)
 
@@ -261,15 +260,10 @@ set `DirectInput=1`. Startup may be slower.
 [Open an issue](../../issues) and say what happened and what you expected,
 plus the version (the first line of `jvppbport.log`).
 
-**Windows:** for anything you can see, press **F12** while it's on screen:
-the game saves `bug_<number>.bmp`, `.txt` and `.bin` in the data folder.
-Attach the `.bmp` and `.txt` to the issue. **Don't attach the `.bin`
-publicly**: it contains the game's graphics from memory; say you have it and
-we'll ask for it privately. If the game crashed, attach `jvppbport.log`.
-
-**Android:** say which device and Android version you have. Take a normal
-screenshot of the problem and attach `jvppbport.log` from the data folder
-(see [Your files](#your-files)), especially after a crash.
+For anything you can see, attach a normal screenshot of the problem. If the
+game crashed, attach `jvppbport.log` from the data folder (see
+[Your files](#your-files)). On Android, also say which device and Android
+version you have.
 
 ## Planned
 
