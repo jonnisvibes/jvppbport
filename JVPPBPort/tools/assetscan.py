@@ -9,11 +9,35 @@
 # are skipped too: they are plain number tables any program can contain
 # (SDL2 for Android has 8 to 15 as 32-bit numbers, as the ROM does).
 #
-# Usage: assetscan.py PROGRAM [ROM]   (ROM defaults to baserom.gba)
+# Usage: assetscan.py [--snapshot] PROGRAM [ROM]   (ROM defaults to baserom.gba)
 # PROGRAM can also be a folder: then every file in it (and below) is checked.
 # Prints what it finds; exits 1 if anything was found.
+#
+# --snapshot: for F12 bug snapshots (bug_*.bin). The ROM holds four recorded
+# game states (gIdleBoardGameState0-3, struct PinballGame, GBA layout) that
+# the attract-mode demos start from; a running game's own state matches
+# them here and there by chance (and during a demo it is a copy of one).
+# That's game state, not graphics or sound, so those blocks are skipped,
+# except where the records hold copied palettes and text (the fields the
+# snapshot zeroes), which are still looked for.
 import os
 import sys
+
+# ROM offsets of gIdleBoardGameState0..3 (one after the other, 0x1424 each;
+# from pokepinballrs.map) and, inside each, the fields that hold game data
+# (GBA offsets: bonusTextContent, savedObjPalette + savedBgPalette,
+# pauseObjPalette; include/global.h).
+DEMO_STATES = (0x1531F4, 0x158284)
+DEMO_STATE_SIZE = 0x1424
+DEMO_DATA_FIELDS = ((0x678, 0x6B4), (0x74C, 0xF4C), (0x111A, 0x131A))
+
+
+def demo_state_block(off):
+    if not DEMO_STATES[0] <= off < DEMO_STATES[1]:
+        return False
+    start = (off - DEMO_STATES[0]) % DEMO_STATE_SIZE
+    end = start + BLOCK
+    return not any(start < b and end > a for a, b in DEMO_DATA_FIELDS)
 
 BLOCK = 32
 MIN_VALUES = 8
@@ -39,13 +63,17 @@ def scan(path, blocks):
 
 
 def main():
-    rom = open(sys.argv[2] if len(sys.argv) > 2 else 'baserom.gba', 'rb').read()
+    args = sys.argv[1:]
+    snapshot = '--snapshot' in args
+    if snapshot:
+        args.remove('--snapshot')
+    rom = open(args[1] if len(args) > 1 else 'baserom.gba', 'rb').read()
     blocks = {}
     for off in range(0, len(rom) - BLOCK + 1, BLOCK):
         b = rom[off:off + BLOCK]
-        if len(set(b)) >= MIN_VALUES and not counting(b):
+        if len(set(b)) >= MIN_VALUES and not counting(b) and not (snapshot and demo_state_block(off)):
             blocks.setdefault(b, off)
-    target = sys.argv[1]
+    target = args[0]
     if os.path.isdir(target):
         files = sorted(os.path.join(d, f) for d, dirs, names in os.walk(target)
                        if '.git' not in d.split(os.sep) for f in names)

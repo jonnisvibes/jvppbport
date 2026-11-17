@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3.0
+
+### New
+* **Portable mode** (Windows): an empty `portable.txt` next to
+  `JVPPBPort.exe` makes the program keep everything (save, settings,
+  `gamedata.bin`, `tables.bin`, log, bug snapshots) in its own folder. If
+  that folder can't be written to (Program Files, a read-only stick), the
+  usual `%APPDATA%\JVPPBPort\` is used and the log says why. Nothing is moved
+  over by itself.
+* **Wallpaper** (Windows): a `wallpaper.png` in the data folder shows behind
+  the game, in the bars beside the table: in fullscreen, or in a window
+  wider than the game (for example maximized). It's fitted to the screen or
+  window (shown whole, never stretched or cropped), turns with TATE MODE,
+  and doesn't change how the game itself looks. A new picture shows after
+  clicking back on the game. PNG only, up to 8192 pixels a side.
+* **Android: Back on the main menu closes the app** (on PRESS START and the
+  open menu). Settings are saved first. Back works as before everywhere
+  else, and the on-screen pause button never closes the app.
+
+### Changed
+* **Android flipper buttons** (BUTTONS and PLAIN): a finger that lands on the
+  table or beside the pause button and slides onto a flipper button now
+  presses it, and a touch just above the buttons counts as that button. The
+  gap beside the pause button is smaller. Sliding never pauses the game:
+  only a direct tap does. ZONES is unchanged.
+* **F12 bug snapshots hold no game data:** the `.bin` keeps the game's state
+  but no graphics or palettes, and is about a quarter of its old size.
+* `jvppbport.log` now says at start which data folder is in use.
+
+### Fixed
+* F12 outside a game (for example on the title screen) crashed the program.
+
+### Docs
+* README: portable mode, the wallpaper, and F12 bug snapshots back in
+  "Reporting bugs" and the bug report form.
+* stb_image (reads the wallpaper) added to the credits, LICENSE.md and
+  THIRD_PARTY_NOTICES.md.
+
 ## 0.2.0
 
 ### New

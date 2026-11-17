@@ -22,8 +22,11 @@ labels: bug
 
 **Attachments**
 For anything visible, attach a normal screenshot. If the game crashed, attach
-`jvppbport.log`:
-- Windows: from `%APPDATA%\JVPPBPort\`.
-- Android: from `Android/data/com.jvppbport/files/` (easiest over USB from a computer).
+`jvppbport.log`. Optional, but a big help: press F12 while the problem is on
+screen (on Android with a keyboard connected) and attach the
+`bug_<number>.bmp`, `.txt` and `.bin` it saves, in a zip (they hold no game data).
+All these files are in the data folder:
+- Windows: `%APPDATA%\JVPPBPort\` (or next to the `.exe` in portable mode).
+- Android: `Android/data/com.jvppbport/files/` (easiest over USB from a computer).
 
 Please don't attach your ROM, `gamedata.bin` or `tables.bin` (they are game data).

@@ -13,6 +13,9 @@
 #include <string.h>
 #include <SDL.h>
 #include <SDL_syswm.h>
+#ifdef __ANDROID__
+#include <unistd.h>
+#endif
 #include "global.h"
 #include "main.h"
 #include "constants/fields.h"
@@ -31,11 +34,13 @@ static uint32_t sFrame[PORT_MENU_MAX_H * PORT_MENU_MAX_W];  // the canvas (see P
 static Uint64 sNextFrameTime;
 static jmp_buf sResetJump;
 static u32 sFrameCount;
+static int sHiddenWindow;  // a hidden copy drawing the table pictures (gamedata.c)
 
 // Test mode, for checking the port without a person at the keyboard:
 //   JVPPBPORT_SHOTS=60,300,900   save shot_<frame>.bmp in the data folder (system.c) at those frames
 //   JVPPBPORT_EXIT=900           quit after that frame
 //   JVPPBPORT_SNAPSHOT=4650      take an F12 bug snapshot at those frames
+//   JVPPBPORT_FULLSCREEN=300,900 switch fullscreen at those frames, as F11 does
 //   JVPPBPORT_PRESS, JVPPBPORT_HOLD_EVERY, JVPPBPORT_MOUSE: buttons, keys and
 //                                     mouse at given frames, see input.c
 //   JVPPBPORT_TEST_FIELD=3            the next game started plays this field instead
@@ -382,6 +387,8 @@ static void InitWindow(void)
     // visible window and leave the saved window place alone.
     int hidden = getenv("JVPPBPORT_TABLEDUMP") != NULL;
 
+    sHiddenWindow = hidden;
+
     // Draw at the screen's real resolution on Windows with display scaling
     // (otherwise Windows stretches the window and blurs it).
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
@@ -535,11 +542,34 @@ static void SaveScreenshot(void)
 }
 
 // EXIT, the SAVE AND QUIT key: closes the program as the
-// window's close button does.
+// window's close button does. On Android (Back on the main menu, input.c)
+// the settings are written, then the activity is finished, so Android
+// doesn't keep a dead screen around; once it has let go of the game's
+// thread (SDL_QUIT, sent from the activity's onDestroy) the process ends.
 void PortQuit(void)
 {
     PortConfirmAbort();
     SaveWindowSettings();
+#ifdef __ANDROID__
+    if (!sHeadless)
+    {
+        SDL_Event event;
+
+        PortSettingsSave();
+        PortRumble(0);
+        PortAndroidFinish();
+        while (SDL_WaitEventTimeout(&event, 3000))
+        {
+            if (event.type == SDL_QUIT || event.type == SDL_APP_TERMINATING)
+                break;
+            if (event.type == SDL_DROPFILE)
+                SDL_free(event.drop.file);
+        }
+        fprintf(stderr, "JVPPBPort: closed\n");
+        fflush(NULL);
+        _exit(0);  // not exit(): SDL's Java side is still waiting for this thread
+    }
+#endif
     PortExit(0);
 }
 
@@ -548,6 +578,9 @@ static void ToggleFullscreen(void)
 {
     SDL_SetWindowFullscreen(sWindow, IsFullscreen() ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
     SaveWindowSettings();
+#ifndef __ANDROID__
+    PortWallpaperRecheck();  // a picture swapped meanwhile shows now
+#endif
 }
 
 // Options -> SCREEN -> FULLSCREEN (PC only: touch screens are always the
@@ -648,6 +681,10 @@ int PortPollEvent(SDL_Event *event)
             exit(0);
         }
         TrackWindow(event);
+#ifndef __ANDROID__
+        if (event->type == SDL_WINDOWEVENT && event->window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+            PortWallpaperRecheck();  // back from Explorer: wallpaper.png may have changed
+#endif
 #ifdef __ANDROID__
         if (event->type == SDL_APP_WILLENTERBACKGROUND)
         {
@@ -691,6 +728,16 @@ void PortWindowToPicture(float fx, float fy, float *x, float *y)
 }
 
 uint32_t gPortWindowBarColor = 0xFF000000;
+
+// A wallpaper is behind the game this frame (wallpaper.c; never on Android).
+static int WallpaperShown(void)
+{
+#ifndef __ANDROID__
+    return PortWallpaperShown();
+#else
+    return 0;
+#endif
+}
 
 // Shows a finished canvas (width x height) in the window.
 void PortPresent(const uint32_t *canvas, int width, int height)
@@ -746,15 +793,25 @@ void PortPresent(const uint32_t *canvas, int width, int height)
     if (SDL_GetRendererOutputSize(sRenderer, &outW, &outH) != 0 || outW <= 0 || outH <= 0)
         outW = width, outH = height;
     PictureRect(outW, outH, width, height, &x, &y, &scale);
+#ifndef __ANDROID__
+    // wallpaper.png behind the game, fullscreen or windowed (wallpaper.c):
+    // the bars are black under it, also on the screens whose bars take the
+    // edge color.
+    if (PortWallpaperUpdate(sRenderer, !PortTouchEnabled() && !sHiddenWindow, outW, outH))
+        gPortWindowBarColor = 0xFF000000;
+#endif
     if (!PortLcdDraw(sRenderer, sTexture, width, height, x, y, scale, gx, gy, gw, gh))
     {
         SDL_SetRenderDrawColor(sRenderer, (gPortWindowBarColor >> 16) & 0xFF, (gPortWindowBarColor >> 8) & 0xFF,
                                gPortWindowBarColor & 0xFF, 255);
         SDL_RenderClear(sRenderer);
+#ifndef __ANDROID__
+        PortWallpaperDraw(sRenderer, x, y, width * scale, height * scale);
+#endif
         ApplyView(width, height, x, y, scale);
         SDL_RenderCopy(sRenderer, sTexture, NULL, NULL);
     }
-    if ((PortLcdFilter() != PORT_LCD_OFF || PortTate()) && FrameListed(sShots, sFrameCount + 1))
+    if ((PortLcdFilter() != PORT_LCD_OFF || PortTate() || WallpaperShown()) && FrameListed(sShots, sFrameCount + 1))
     {
         // Test shots: the window as shown, filter and turning included.
         char name[32], path[1100];
@@ -811,6 +868,8 @@ static void HandleEvents(void)
         sSnapshotRequested = 0;
         BugSnapshot();
     }
+    if (!sHeadless && !PortTouchEnabled() && FrameListed(getenv("JVPPBPORT_FULLSCREEN"), sFrameCount))
+        ToggleFullscreen();  // test mode: as F11 at those frames
     while (!sHeadless && PortPollEvent(&event))
     {
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_F12)
@@ -928,7 +987,10 @@ int main(int argc, char **argv)
     gPortStaticView = getenv("JVPPBPORT_GBAVIEW") == NULL;
     PortSystemInit();
     if (!gPortForkedCopy)
+    {
         fprintf(stderr, "%s %s\n", PORT_NAME, PORT_VERSION);
+        PortLogDataDir();
+    }
     sHeadless = gPortForkedCopy;
     if (!sHeadless)
         InitWindow();

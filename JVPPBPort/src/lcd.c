@@ -496,6 +496,9 @@ int PortLcdDraw(SDL_Renderer *renderer, SDL_Texture *picture, int w, int h, floa
     SDL_SetRenderDrawColor(renderer, (gPortWindowBarColor >> 16) & 0xFF, (gPortWindowBarColor >> 8) & 0xFF,
                            gPortWindowBarColor & 0xFF, 255);
     SDL_RenderClear(renderer);
+#ifndef __ANDROID__
+    PortWallpaperDraw(renderer, x0, y0, w * scale, h * scale);  // fullscreen only (wallpaper.c)
+#endif
     dst = (SDL_FRect){x0, y0, w * scale, h * scale};
     SDL_SetTextureBlendMode(sBig, SDL_BLENDMODE_NONE);
     SDL_SetTextureAlphaMod(sBig, 255);

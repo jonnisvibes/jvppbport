@@ -27,7 +27,7 @@
 # signed with another key can't update the installed game, and uninstalling
 # it deletes the save). Like Windows, it reuses the Linux build's data.
 # RELEASE=1 makes the public .apk: not debuggable, and its version code is
-# exactly the port version's (0.2.0 = 20000, as in VERSION_CODE below). Test
+# exactly the port version's (0.3.0 = 30000, as in VERSION_CODE below). Test
 # builds are debuggable and count up from there with the APK build number, so
 # a phone can always install the next test build over the last one.
 

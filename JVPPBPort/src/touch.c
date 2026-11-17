@@ -10,6 +10,10 @@
 // - Flippers: a finger on the strip's left half holds the left flipper, on
 //   the right half the right one (which also launches the ball, as on the
 //   GBA). The middle button is Esc: pause while playing, back in menus.
+//   While playing, a finger a little above the strip (StripSlack) counts as
+//   that half's button too, and one that landed on the table or beside the
+//   pause button and slides onto a flipper button becomes it (FlipperAt);
+//   sliding never presses pause (only a direct touch does).
 // - Tilt: a swipe that starts on the table, left, right or up, at least
 //   SWIPE_MIN pixels long. One tilt per swipe. A tap on the table while
 //   playing is a click (A: says yes to the game's prompts, e.g. at the boss
@@ -70,6 +74,8 @@
 #define SWIPE_STEP 24      // in a menu, one more D-pad press each time a swipe goes this much further
 #define TILT_FRAMES 6      // a tilt holds its action this long, like a key tap
 #define MAX_FINGERS 10
+#define PAUSE_SLACK 2      // BUTTONS: the pause button's touch area (and the gap beside it) is this much wider than drawn
+#define CORNER_SLACK 8     // ZONES: the same for the corner pause button
 
 enum
 {
@@ -95,6 +101,7 @@ static struct
     int8_t axis;   // a menu swipe: 0 across, 1 up/down
     int steps;     // a menu swipe: D-pad presses made so far
     bool8 held;    // a menu finger on the Pokédex list or its bar: a held mouse button
+    uint32_t frame0;  // the frame it went down on (for the touch log)
 } sFingers[MAX_FINGERS];
 static int sFingerCount;
 
@@ -773,9 +780,36 @@ static int SpoinkAt(float x, float y)
     return gMain.selectedField < MAIN_FIELD_COUNT && tx >= 218 && tx < PORT_CANVAS_WIDTH && ty >= 356 && ty < 444;
 }
 
+// BUTTONS: how far above the strip (on the table) a finger still counts as
+// a flipper button, in screen pixels; it grows with the buttons (12 at the
+// phones' usual button size of 40).
+static int StripSlack(void)
+{
+    int slack = sButtonR * 12 / 40;
+
+    return slack < 4 ? 4 : slack;
+}
+
+// BUTTONS while playing: the flipper button at this place (the strip's
+// left / right part, or the slack just above it), else ZONE_NONE. Never the
+// pause button (nor the gap beside it) or Spoink. Used at touch-down for the
+// slack above the strip, and for fingers that slide onto a button.
+static int FlipperAt(float x, float y)
+{
+    int dx = (int)x - sScreenW / 2, r = sPauseR + PAUSE_SLACK;
+
+    if (!HasButtons() || !Playing() || y < sStripY - StripSlack())
+        return ZONE_NONE;
+    if (y < sStripY && SpoinkAt(x, y))
+        return ZONE_NONE;
+    if (dx > -r && dx < r)
+        return ZONE_NONE;  // the pause button and the gap around it
+    return dx < 0 ? ZONE_LEFT : ZONE_RIGHT;
+}
+
 static int ZoneAt(float x, float y)
 {
-    int dx = (int)x - sScreenW / 2, dy = (int)y - sButtonY, r = sPauseR + 8, zone;
+    int dx = (int)x - sScreenW / 2, dy = (int)y - sButtonY, r = sPauseR + PAUSE_SLACK, zone;
 
     if (!GameOn())
     {
@@ -798,9 +832,9 @@ static int ZoneAt(float x, float y)
         return Playing() ? ZONE_SWIPE : ZONE_MOUSE;  // swipes don't tilt then
     if (Zones())
     {
-        int cx = (int)x - CornerX(), cy = (int)y - CornerY();
+        int cx = (int)x - CornerX(), cy = (int)y - CornerY(), rc = sPauseR + CORNER_SLACK;
 
-        if (!MartOpen() && cx * cx + cy * cy <= r * r)
+        if (!MartOpen() && cx * cx + cy * cy <= rc * rc)
             return ZONE_PAUSE;
         if (Playing() && !PortGameChoiceOpen())
             return x < sScreenW / 2 ? ZONE_LEFT : ZONE_RIGHT;
@@ -818,7 +852,46 @@ static int ZoneAt(float x, float y)
     }
     if (Playing() && SpoinkAt(x, y))
         return ZONE_LAUNCH;
+    if ((zone = FlipperAt(x, y)) != ZONE_NONE)
+        return zone;  // just above the strip
     return Playing() ? ZONE_SWIPE : ZONE_MOUSE;
+}
+
+// The touch log ([Controls] TouchLog=1 in jvppbport.ini, or
+// JVPPBPORT_TOUCH_LOG=1): in a game, a line in jvppbport.log when a finger
+// goes down (with its zone), changes zone and goes up, with where it is as
+// a fraction of the screen (0,0 top left; the strip starts at the y shown in
+// the first line). Only on those events, never every frame.
+static int TouchLogOn(void)
+{
+    static int on = -1;
+
+    if (on < 0)
+    {
+        const char *env = getenv("JVPPBPORT_TOUCH_LOG");
+
+        on = (env && atoi(env)) || PortSettingGetInt("Controls", "TouchLog", 0);
+        if (on)
+            PortLog("touch log on: screen %dx%d, window %dx%d, strip from y %.3f, buttons r %.3f of the width",
+                    sScreenW, sScreenH, sWindowW, sWindowH, (double)sStripY / sScreenH, (double)sButtonR / sScreenW);
+    }
+    return on;
+}
+
+static const char *ZoneName(int zone)
+{
+    static const char *const names[] = { "NONE", "LEFT", "RIGHT", "PAUSE", "LAUNCH", "TABLE", "MOUSE", "MENU", "UP", "DOWN" };
+
+    return zone >= 0 && zone < (int)(sizeof(names) / sizeof(names[0])) ? names[zone] : "?";
+}
+
+static void TouchLog(int i, const char *what, float x, float y)
+{
+    if (!GameOn() || !TouchLogOn())
+        return;
+    PortLog("touch %s finger %lld zone %s at %.3f,%.3f frame %u (+%u)", what, (long long)sFingers[i].id,
+            ZoneName(sFingers[i].zone), (double)x / sScreenW, (double)y / sScreenH,
+            PortCurrentFrame(), PortCurrentFrame() - sFingers[i].frame0);
 }
 
 // A finger that may tilt moved: past SWIPE_MIN it tilts once that way.
@@ -982,6 +1055,8 @@ int PortTouchEvent(SDL_Event *event)
         sFingers[i].used = FALSE;
         sFingers[i].steps = 0;
         sFingers[i].held = FALSE;
+        sFingers[i].frame0 = PortCurrentFrame();
+        TouchLog(i, "down", x, y);
         // Only one finger works the menus. It points there now; the click
         // comes when it's lifted (if it didn't swipe). On the Pokédex list
         // and its scroll bar it presses at once and drags, as the mouse does.
@@ -1022,6 +1097,20 @@ int PortTouchEvent(SDL_Event *event)
         if (sFingers[i].zone == ZONE_SWIPE
             || (Zones() && (sFingers[i].zone == ZONE_LEFT || sFingers[i].zone == ZONE_RIGHT)))
             TiltSwipe(i, x, y);
+        // BUTTONS: a finger that landed on the table (it may have tilted
+        // already) or beside the pause button and slides onto a flipper
+        // button becomes that button, as if it had touched there. Sliding
+        // never presses pause.
+        if (sFingers[i].zone == ZONE_SWIPE || sFingers[i].zone == ZONE_NONE)
+        {
+            int zone = FlipperAt(x, y);
+
+            if (zone != ZONE_NONE)
+            {
+                sFingers[i].zone = zone;
+                TouchLog(i, "slid", x, y);
+            }
+        }
         return 0;
     case SDL_FINGERUP:
         PortWindowToPicture(event->tfinger.x, event->tfinger.y, &x, &y);
@@ -1031,6 +1120,7 @@ int PortTouchEvent(SDL_Event *event)
         {
             int zone = sFingers[i].zone, swiped = sFingers[i].used, held = sFingers[i].held;
 
+            TouchLog(i, "up", x, y);
             sFingers[i] = sFingers[--sFingerCount];
             if (held)
                 return AsMouse(event, SDL_MOUSEBUTTONUP, x, y);

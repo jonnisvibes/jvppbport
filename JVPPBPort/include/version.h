@@ -5,4 +5,4 @@
 #define PORT_VERSION_MAJOR 0
 #define PORT_VERSION_MINOR 2
 #define PORT_VERSION_PATCH 0
-#define PORT_VERSION "0.2.0"
+#define PORT_VERSION "0.3.0"

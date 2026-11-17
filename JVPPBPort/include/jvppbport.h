@@ -60,6 +60,7 @@ struct __attribute__((aligned(4))) PortSprite
 extern int gPortStaticView;  // 0 with JVPPBPORT_GBAVIEW=1
 int PortPcMenus(void);       // screenmenu.c: the PC's EXIT item and SAVE AND QUIT key
 void PortQuit(void);         // platform.c
+int PortTitleWaiting(void);  // src/titlescreen.c: PRESS START or the main menu, waiting for a button
 extern struct PortSprite gPortSprites[PORT_MAX_SPRITES];
 extern int gPortSpriteCount;
 extern uint16_t gPortSpritePalettes[PORT_MAX_SPRITES][16];
@@ -251,6 +252,7 @@ void PortSaveForget(void);
 
 // system.c: the data folder, messages and crash reports (see there).
 void PortSystemInit(void);
+void PortLogDataDir(void);
 const char *PortDataPath(char *out, size_t size, const char *name);
 const char *PortAssetPath(char *out, size_t size, const char *name);
 void PortMakeDir(const char *path);
@@ -289,6 +291,7 @@ void PortAndroidPickedFileDone(const char *path);
 void PortAndroidVibrate(int on);
 void PortAndroidTestEnv(void);
 int PortAndroidPadVibrate(int on);
+void PortAndroidFinish(void);
 
 // pad.c: game controllers (see there). Their buttons, stick directions and
 // triggers are input.c's keys PORT_PAD_BASE + code.
@@ -338,6 +341,14 @@ struct SDL_Texture;
 int PortLcdDraw(struct SDL_Renderer *renderer, struct SDL_Texture *picture, int w, int h, float x0, float y0, float scale,
                 int gx, int gy, int gw, int gh);
 void PortLcdSaveWindow(struct SDL_Renderer *renderer, const char *path);
+// wallpaper.c (PC only): wallpaper.png from the data folder behind the game,
+// fullscreen or windowed (see there).
+#ifndef __ANDROID__
+int PortWallpaperUpdate(struct SDL_Renderer *renderer, int on, int outW, int outH);
+void PortWallpaperRecheck(void);
+int PortWallpaperShown(void);
+void PortWallpaperDraw(struct SDL_Renderer *renderer, float px, float py, float pw, float ph);
+#endif
 // platform.c: Options -> SCREEN -> SCALE (0 = FILL, PORT_SCALE_SNAP = SNAP FILL,
 // N = N times).
 #define PORT_SCALE_SNAP (-1)

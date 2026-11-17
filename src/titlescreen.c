@@ -64,6 +64,16 @@ static struct VectorU16 MenuPos(const struct VectorU16 *table, int count)
 }
 #define MENU_POS(table, count) MenuPos(table, count)
 
+// The title screen is waiting for a button: PRESS START or the main menu
+// (Android's Back closes the app there, input.c). Not while it fades or
+// animates, nor in the delete-save question (B says no there).
+int PortTitleWaiting(void)
+{
+    return gMain.mainState == STATE_TITLE && !gTitleTransitionActive
+        && (gMain.subState == SUBSTATE_WAIT_FOR_START_BUTTON || gMain.subState == SUBSTATE_MENU_INPUT_NO_SAVED_GAME
+            || gMain.subState == SUBSTATE_MENU_INPUT_SAVED_GAME);
+}
+
 // The EXIT word, while the menu box is open.
 static void DrawExitItem(int count)
 {

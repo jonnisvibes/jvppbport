@@ -14,9 +14,9 @@ The program takes what it needs from the ROM and keeps it in its data folder.
 Fan project, not affiliated with or endorsed by Nintendo, Creatures, GAME FREAK
 or The Pokémon Company.
 
-> **New in 0.2.0:** an Android version (an experimental public playtest), full-size bonus stages,
-> Tate mode for a sideways monitor, and safer screen settings. See
-> [CHANGELOG.md](CHANGELOG.md) for everything.
+> **New in 0.3.0:** portable mode and a wallpaper on Windows, a Back button
+> that closes the app and steadier flipper buttons on Android, and cleaned up
+> F12 debug data. See [CHANGELOG.md](CHANGELOG.md) for everything.
 
 ## Features
 
@@ -53,7 +53,9 @@ You can delete the ROM file afterwards if you like; the program keeps what it
 needs in its data folder.
 
 Updating: unzip the new version over the old one (or anywhere else). Your save
-and settings are in the data folder, not next to the `.exe`, so they carry over.
+and settings are in the data folder, not next to the `.exe`, so they carry over
+(in [portable mode](#your-files), unzip over the old version so they stay
+next to it).
 
 Linux: build it from source, see [docs/BUILDING.md](docs/BUILDING.md)
 (untested outside of WSL).
@@ -114,7 +116,8 @@ The mouse works in the menus too: point at an item, left click to choose it,
 right click to go back. The left and right mouse buttons can also be set as
 pinball keys.
 
-Other keys: **Alt+Enter** or **F11** switches fullscreen.
+Other keys: **Alt+Enter** or **F11** switches fullscreen, **F12** saves a bug
+snapshot (see [Reporting bugs](#reporting-bugs)).
 
 ## Touch controls (Android)
 
@@ -171,6 +174,15 @@ Options → SCREEN has:
   that doesn't work on your screen undoes itself. Leaving Options with
   unconfirmed changes asks whether to **SAVE** or **DISCARD** them.
 
+**Wallpaper (Windows):** put a picture named `wallpaper.png` in the data
+folder (`%APPDATA%\JVPPBPort\`, or next to `JVPPBPort.exe` in
+[portable mode](#your-files)) and it shows behind the game, in the bars
+beside the table: in fullscreen, or in a window that's wider than the game
+(for example maximized). It's fitted to the screen or window (shown whole,
+never stretched or cropped; black where it doesn't reach) and turns with
+TATE MODE. PNG only, up to 8192 pixels a side. To change it, swap the file
+and click back on the game. If it doesn't show, `jvppbport.log` says why.
+
 ## Ball speed
 
 Field Select (and Bonus Field Select) has **SLOW**, **NORMAL** and **FAST**.
@@ -224,6 +236,15 @@ caught). Latios and Latias need no unlock.
 **Windows:** saves, settings and the data taken from your ROM are kept in
 `%APPDATA%\JVPPBPort\` (paste that into the Explorer address bar).
 
+**Portable mode (Windows):** put an empty file named `portable.txt` next to
+`JVPPBPort.exe` (for example on a USB stick). The program then keeps
+everything listed below in its own folder instead, and asks for the ROM once
+there. The folder must be writable: in a folder like Program Files, or on a
+read-only stick, the program uses `%APPDATA%\JVPPBPort\` as usual (the log
+says why). Nothing is moved over by itself: to bring an existing save and
+settings along, copy the files from `%APPDATA%\JVPPBPort\` next to the `.exe`
+yourself.
+
 **Android:** `Android/data/com.jvppbport/files/` on the device's storage.
 The easiest way to reach it is to connect the device to a computer by USB
 (choose "File transfer" on the device). Many phones can't open
@@ -234,6 +255,11 @@ The easiest way to reach it is to connect the device to a computer by USB
 * `gamedata.bin`, `tables.bin`: taken from your ROM at the first start. They
   contain game data: don't share them.
 * `jvppbport.log`: messages and crash reports.
+* `wallpaper.png` (Windows, optional, yours): shown behind the game (see
+  [Screen options](#screen-options)).
+* `bug_<number>.bmp`, `.txt`, `.bin`: bug snapshots made with F12 (see
+  [Reporting bugs](#reporting-bugs)). They hold no game data. Delete them
+  whenever you like.
 
 ### Hidden settings
 
@@ -265,6 +291,12 @@ game crashed, attach `jvppbport.log` from the data folder (see
 [Your files](#your-files)). On Android, also say which device and Android
 version you have.
 
+Optional, but a big help: press **F12** while the problem is on screen (on
+Android this needs a keyboard connected to the device). That saves a bug
+snapshot in the data folder: `bug_<number>.bmp` (a screenshot), `.txt` and
+`.bin` (the game's state at that moment, with no game data in it). Put the
+three files in a zip and attach it along with `jvppbport.log`.
+
 ## Planned
 
 * More support for squarer screens (such as 4:3 monitors and Android
@@ -289,6 +321,8 @@ don't take questions about this port to them.
 * [pret/pokepinballrs](https://github.com/pret/pokepinballrs): the
   decompilation this port is built on.
 * [SDL2](https://www.libsdl.org/): window, input, sound and controllers.
+* [stb_image](https://github.com/nothings/stb) by Sean Barrett: reads the
+  wallpaper picture (Windows).
 * Pokefan531: the measured GBA screen colors used by the GBA filter.
 
 See [LICENSE.md](LICENSE.md) for what license covers which files, and

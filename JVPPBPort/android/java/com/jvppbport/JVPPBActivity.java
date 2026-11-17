@@ -48,6 +48,20 @@ public class JVPPBActivity extends SDLActivity {
         }
     }
 
+    // Back on the main menu: closes the app's screen as Back does in other
+    // apps. Called on the game's thread, which then waits for SDL's quit
+    // (sent from onDestroy) and ends the process.
+    public static void finishApp() {
+        final Activity activity = (Activity) SDLActivity.getContext();
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (!activity.isFinishing())
+                    activity.finish();
+            }
+        });
+    }
+
     // Opens Android's file picker (setup screen). Called on the game's thread.
     public static void pickRom() {
         final Activity activity = (Activity) SDLActivity.getContext();

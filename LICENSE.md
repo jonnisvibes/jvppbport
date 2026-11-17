@@ -15,6 +15,14 @@ That covers:
 - the changes made to pret's files for the port: the code inside
   `#ifdef JVPPBPORT` / `#ifndef JVPPBPORT` blocks in `src/` and `include/`.
 
+Not covered: `JVPPBPort/src/stb_image.h` (see below).
+
+## JVPPBPort/src/stb_image.h: public domain or MIT
+
+stb_image by Sean Barrett, unchanged apart from a note at its top, under
+its own terms (public domain or MIT, your choice), which are at the end of
+the file and in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## The game code: pret's decompilation (no license)
 
 `src/`, `include/` and `charmap.txt` (apart from the port's changes above)

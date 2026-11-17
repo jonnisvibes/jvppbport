@@ -16,6 +16,8 @@
 #include "constants/species.h"
 #include "constants/board/main_board.h"
 #include "jvppbport.h"
+#include "jvppbport_hw.h"
+#include "version.h"
 
 #define EVO_SHOP_SIGN_FRAMES 150  // time for the Mart sign to turn into the evolution sign
 
@@ -558,12 +560,58 @@ static void TestWallCheck(u32 frame)
 
 // F12 while playing: save a "bug snapshot" to attach to a bug report, so a glitch
 // seen in normal play can be looked at later: bug_<frame>.txt in the data folder
-// (the most telling fields, readable) and bug_<frame>.bin (the raw game state:
-// gCurrentPinballGame, gMain, gOamBuffer, the port's sprite list, VRAM,
-// palettes). platform.c saves bug_<frame>.bmp next to them.
+// (the most telling fields, readable) and bug_<frame>.bin (the raw game state).
+// platform.c saves bug_<frame>.bmp next to them.
+//
+// The .bin must hold no game data (graphics, tilemaps, palettes), since players
+// attach it to public bug reports: VRAM and palette RAM are written only as
+// checksums of fixed-size blocks (enough to see "these tiles changed" between
+// two snapshots), and the parts of the game struct that hold copied palettes
+// are zeroed. There is no switch for a full dump, on purpose.
+//
+// Format version 2 (all numbers little-endian u32 unless said otherwise):
+//   char magic[8] "JVPPSNAP"; version (2); char portVersion[16] (zero-padded);
+//   frame; flags (bit 0: game struct present, i.e. gCurrentPinballGame was set);
+//   pointer size of this build (the structs are the port's own layout);
+//   gameSize (0 if absent), mainSize, oamSize, portSpritesSize, ioSize,
+//   vramBlockSize, vramBlockCount, plttBlockSize, plttBlockCount;
+// then: game struct (gameSize bytes, palette copies and bonus text zeroed), gMain, gOamBuffer
+// (all PORT_MAX_SPRITES entries), gPortSprites, the screen registers (I/O
+// 0x000-0x05F: DISPCNT, BG control/offsets/affine, window, mosaic, blend),
+// vramBlockCount FNV-1a checksums of VRAM, plttBlockCount of palette RAM.
+#define SNAP_VERSION 2
+#define SNAP_IO_SIZE 0x60
+#define SNAP_VRAM_BLOCK 0x400  // 96 blocks: a screen block is 2, a char block 16
+#define SNAP_PLTT_BLOCK 0x20   // 32 blocks: one per 16-color palette
+
+static u32 Fnv1a(const u8 *data, u32 size)
+{
+    u32 hash = 2166136261u;
+
+    while (size--)
+        hash = (hash ^ *data++) * 16777619u;
+    return hash;
+}
+
+static void WriteU32(FILE *f, u32 value)
+{
+    u8 bytes[4] = { value, value >> 8, value >> 16, value >> 24 };
+
+    fwrite(bytes, 4, 1, f);
+}
+
+static void WriteBlockSums(FILE *f, const u8 *data, u32 size, u32 block)
+{
+    u32 i;
+
+    for (i = 0; i < size; i += block)
+        WriteU32(f, Fnv1a(data + i, block));
+}
+
 void PortBugSnapshot(u32 frame)
 {
-    char name[32], path[1100];
+    static struct PinballGame copy;
+    char name[32], path[1100], version[16] = PORT_VERSION;
     FILE *f;
     struct PinballGame *game = gCurrentPinballGame;
     int i;
@@ -571,15 +619,38 @@ void PortBugSnapshot(u32 frame)
     snprintf(name, sizeof(name), "bug_%u.bin", frame);
     if ((f = fopen(PortDataPath(path, sizeof(path), name), "wb")) != NULL)
     {
-        u32 sizes[6] = { sizeof(*game), sizeof(gMain), PORT_MAX_SPRITES * sizeof(struct OamData),
-                         sizeof(gPortSprites), PORT_VRAM_SIZE, PORT_PLTT_SIZE };
-        fwrite(sizes, sizeof(sizes), 1, f);
-        fwrite(game, sizes[0], 1, f);
-        fwrite(&gMain, sizes[1], 1, f);
-        fwrite(gOamBuffer, sizes[2], 1, f);
-        fwrite(gPortSprites, sizes[3], 1, f);
-        fwrite(gPortVram, sizes[4], 1, f);
-        fwrite(gPortPltt, sizes[5], 1, f);
+        fwrite("JVPPSNAP", 8, 1, f);
+        WriteU32(f, SNAP_VERSION);
+        fwrite(version, sizeof(version), 1, f);
+        WriteU32(f, frame);
+        WriteU32(f, game != NULL);
+        WriteU32(f, sizeof(void *));
+        WriteU32(f, game ? sizeof(*game) : 0);
+        WriteU32(f, sizeof(gMain));
+        WriteU32(f, PORT_MAX_SPRITES * sizeof(struct OamData));
+        WriteU32(f, sizeof(gPortSprites));
+        WriteU32(f, SNAP_IO_SIZE);
+        WriteU32(f, SNAP_VRAM_BLOCK);
+        WriteU32(f, PORT_VRAM_SIZE / SNAP_VRAM_BLOCK);
+        WriteU32(f, SNAP_PLTT_BLOCK);
+        WriteU32(f, PORT_PLTT_SIZE / SNAP_PLTT_BLOCK);
+        if (game)
+        {
+            // Copies of the palettes (taken when pausing or switching boards).
+            memcpy(&copy, game, sizeof(copy));
+            memset((void *)copy.savedObjPalette, 0, sizeof(copy.savedObjPalette));
+            memset((void *)copy.savedBgPalette, 0, sizeof(copy.savedBgPalette));
+            memset(copy.pauseObjPalette, 0, sizeof(copy.pauseObjPalette));
+            // Bonus summary text, copied from the game's text tables.
+            memset(copy.bonusTextContent, 0, sizeof(copy.bonusTextContent));
+            fwrite(&copy, sizeof(copy), 1, f);
+        }
+        fwrite(&gMain, sizeof(gMain), 1, f);
+        fwrite(gOamBuffer, PORT_MAX_SPRITES * sizeof(struct OamData), 1, f);
+        fwrite(gPortSprites, sizeof(gPortSprites), 1, f);
+        fwrite(gPortIo, SNAP_IO_SIZE, 1, f);
+        WriteBlockSums(f, gPortVram, PORT_VRAM_SIZE, SNAP_VRAM_BLOCK);
+        WriteBlockSums(f, gPortPltt, PORT_PLTT_SIZE, SNAP_PLTT_BLOCK);
         fclose(f);
     }
     snprintf(name, sizeof(name), "bug_%u.txt", frame);
@@ -587,7 +658,9 @@ void PortBugSnapshot(u32 frame)
         return;
     fprintf(f, "frame %u mainState %d subState %d field %d modeChangeFlags %#x\n",
             frame, gMain.mainState, gMain.subState, gMain.selectedField, gMain.modeChangeFlags);
-    if (gMain.mainState == STATE_GAME_MAIN && gMain.selectedField < MAIN_FIELD_COUNT)
+    if (!game)
+        fprintf(f, "no game running\n");
+    else if (gMain.mainState == STATE_GAME_MAIN && gMain.selectedField < MAIN_FIELD_COUNT)
     {
         fprintf(f, "boardState %d boardSubState %d ballCatchState %d cameraYViewport %d\n",
                 game->boardState, game->boardSubState, game->ballCatchState, game->cameraYViewport);

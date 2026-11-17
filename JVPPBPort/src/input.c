@@ -197,6 +197,7 @@ static const char *sPresses, *sHoldEvery, *sMouseScript;
 // Android's Back button or gesture works like Esc. It goes down and up at
 // once, so it's kept until the next frame reads it.
 static bool8 sBackPressed;
+static bool8 sBackKey;  // ... by Android's own Back (not the touch pause button)
 
 // Key names as in the settings file and test scripts (SDL's, plus the mouse).
 static const char *ScancodeName(SDL_Scancode key)
@@ -887,7 +888,7 @@ void PortInputEvent(const SDL_Event *event)
     {
     case SDL_KEYDOWN:
         if (event->key.keysym.scancode == SDL_SCANCODE_AC_BACK)
-            sBackPressed = TRUE;
+            sBackPressed = sBackKey = TRUE;
         break;
     case SDL_MOUSEMOTION:
         sMouse.x = event->motion.x;
@@ -969,6 +970,18 @@ u16 PortReadInput(u32 frame)
     {
         deviceBack = TRUE;
         sBackPressed = FALSE;
+#ifdef __ANDROID__
+        // Android's Back on the title screen (PRESS START or the main
+        // menu) closes the app, as other apps do on their first screen.
+        // Only the phone's own Back, not the touch pause button, and not
+        // Esc (the PC keeps its EXIT item).
+        if (sBackKey && PortTitleWaiting())
+        {
+            fprintf(stderr, "JVPPBPort: Back on the main menu, closing\n");
+            PortQuit();
+        }
+#endif
+        sBackKey = FALSE;
     }
     sKeys[MOUSE_LEFT] = sMouseDown[0] || sMousePressed[0];
     sKeys[MOUSE_RIGHT] = sMouseDown[1] || sMousePressed[1];

@@ -14,6 +14,10 @@ int PortAndroidPadVibrate(int on)
     (void)on;
     return 0;
 }
+
+void PortAndroidFinish(void)
+{
+}
 #else
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +54,13 @@ static void CallActivity(const char *method, int arg)
     }
     (*env)->DeleteLocalRef(env, cls);
     (*env)->DeleteLocalRef(env, activity);
+}
+
+// Closes the app's screen (Back on the main menu): the activity's finish(),
+// on Android's own thread.
+void PortAndroidFinish(void)
+{
+    CallActivity("finishApp", -1);
 }
 
 // Opens Android's file picker. The Java side copies the chosen file into the

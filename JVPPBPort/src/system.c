@@ -10,6 +10,10 @@
 //            the log, save and screenshots can be copied off; removed with the
 //            app); the app's private folder if that isn't there
 //   JVPPBPORT_DATA_DIR=folder      overrides all
+//   Portable mode (not on Android): a file named portable.txt next to the
+//   program makes the program's own folder the data folder, unless that
+//   folder can't be written to (then the normal one above is used and the log
+//   says why). Nothing is copied over from %APPDATA%.
 // Asset folder (gamedata.bin and tables.bin, made from the player's ROM; see
 // gamedata.c): the data folder, or JVPPBPORT_ASSET_DIR=folder.
 // Messages: on Windows the program has no console window, so they go to
@@ -20,6 +24,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <signal.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -35,11 +40,17 @@
 #include <execinfo.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <SDL.h>
 #endif
 #include "jvppbport.h"
 
 static char sDataDir[1024];
 static char sAssetDir[1024];
+// Portable mode: 1 = in use; sPortableNote says why it isn't, if portable.txt
+// was found but its folder can't be written to (logged by PortLogDataDir,
+// since the log isn't open yet when the folder is chosen).
+static int sPortable;
+static char sPortableNote[1200];
 
 // Set in a copy of the program made with fork() (Android's table pictures,
 // gamedata.c): it must leave with _exit, not exit, so it doesn't run the
@@ -88,12 +99,91 @@ static void RenameOldFiles(void)
     remove(from);
 }
 
+#ifndef __ANDROID__
+// The program's own folder, ending in a slash, or "" if it can't be found.
+// Windows asks the system directly in the ANSI code page, like every other
+// path in this file (SDL_GetBasePath gives UTF-8, which fopen and _mkdir
+// would misread in a folder with accented letters).
+static void ProgramDir(char *out, size_t size)
+{
+#ifdef _WIN32
+    char path[MAX_PATH], *slash;
+    DWORD len = GetModuleFileNameA(NULL, path, sizeof(path));
+
+    out[0] = 0;
+    if (len == 0 || len >= sizeof(path))
+        return;
+    slash = strrchr(path, '\\');
+    if (!slash)
+        return;
+    slash[1] = 0;
+    snprintf(out, size, "%s", path);
+#else
+    char *base = SDL_GetBasePath();
+
+    out[0] = 0;
+    if (base)
+    {
+        snprintf(out, size, "%s", base);
+        SDL_free(base);
+    }
+#endif
+}
+
+// Portable mode: if portable.txt sits next to the program and that folder can
+// be written to, it becomes the data folder. Returns 1 if so.
+static int FindPortableDir(void)
+{
+    char dir[1024], path[1100];
+    FILE *f;
+    int ok;
+
+    ProgramDir(dir, sizeof(dir));
+    if (!dir[0])
+        return 0;
+    EndWithSlash(dir, sizeof(dir));
+    snprintf(path, sizeof(path), "%sportable.txt", dir);
+    if ((f = fopen(path, "rb")) == NULL)
+        return 0;
+    fclose(f);
+    // Try writing a small file there: Program Files, a read-only stick or a
+    // folder without permission fails here.
+    snprintf(path, sizeof(path), "%sjvppbport.tmp", dir);
+    if ((f = fopen(path, "wb")) == NULL)
+    {
+        snprintf(sPortableNote, sizeof(sPortableNote),
+                 "portable.txt found, but %s can't be written to (%s); using the normal data folder",
+                 dir, strerror(errno));
+        return 0;
+    }
+    ok = fputc('x', f) != EOF;
+    ok = fclose(f) == 0 && ok;
+    remove(path);
+    if (!ok)
+    {
+        snprintf(sPortableNote, sizeof(sPortableNote),
+                 "portable.txt found, but writing to %s failed; using the normal data folder", dir);
+        return 0;
+    }
+    snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
+    return 1;
+}
+#endif
+
 static void FindDataDir(void)
 {
     const char *dir = getenv("JVPPBPORT_DATA_DIR");
 
+    sPortable = 0;
+    sPortableNote[0] = 0;
     if (dir && *dir)
         snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
+#ifndef __ANDROID__
+    // Before the %APPDATA% branch, so the old JCPPBPort folder is never moved
+    // (and nothing else is touched there) in portable mode.
+    else if ((sPortable = FindPortableDir()) != 0)
+        ;
+#endif
 #ifdef _WIN32
     else if (getenv("APPDATA"))
     {
@@ -124,6 +214,19 @@ static void FindDataDir(void)
     dir = getenv("JVPPBPORT_ASSET_DIR");
     snprintf(sAssetDir, sizeof(sAssetDir), "%s", dir && *dir ? dir : sDataDir);
     EndWithSlash(sAssetDir, sizeof(sAssetDir));
+}
+
+void PortLog(const char *fmt, ...);
+
+// Says in the log which data folder is in use (after the version line, which
+// must stay the log's first line).
+void PortLogDataDir(void)
+{
+    if (!sDataDir[0])
+        FindDataDir();
+    if (sPortableNote[0])
+        PortLog("%s", sPortableNote);
+    PortLog("data folder %s%s", sDataDir, sPortable ? " (portable)" : "");
 }
 
 const char *PortDataPath(char *out, size_t size, const char *name)
